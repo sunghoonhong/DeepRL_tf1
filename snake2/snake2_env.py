@@ -15,8 +15,8 @@ import pygame as pg
 from pygame import gfxdraw as gdraw
     
 # size
-WINDOW_WIDTH = 600
-WINDOW_HEIGHT = 600
+WINDOW_WIDTH = 400
+WINDOW_HEIGHT = 400
 
 GRID_LEN = 20
 GRID_SIZE = (GRID_LEN, GRID_LEN)
@@ -24,8 +24,8 @@ RADIUS = GRID_LEN // 2
 RADIUS_SIZE = np.array([RADIUS, RADIUS])
 
 # time
-FPS = 30  # This variable will define how many frames we update per second.
-DELAY = 0.1
+FPS = 30
+DELAY = 0
 
 # color
 BLACK = (0, 0, 0)
@@ -34,7 +34,10 @@ GREEN = (0, 255, 0)
 
 BG_COLOR = BLACK
 
-SPEED = RADIUS * 2.5
+SPEED = 10
+SMOOTH = 0.4
+EYE_RADIUS = 0.1
+EYE_SIZE = (EYE_RADIUS, EYE_RADIUS)
 
 
 class Head(pg.sprite.Sprite):
@@ -48,10 +51,13 @@ class Head(pg.sprite.Sprite):
         self.direction = np.array([0, 0])
         self.rect = pg.Rect((0,0), GRID_SIZE)
         self.image = pg.Surface(GRID_SIZE, pg.SRCALPHA)
-
         gdraw.aacircle(self.image, self.rect.center[0], self.rect.center[1], int(self.radius), GREEN)
         gdraw.filled_circle(self.image, self.rect.center[0], self.rect.center[1], int(self.radius), GREEN)
         
+        self.eye = pg.sprite.Sprite()
+        self.eye.rect = pg.Rect((0,0), EYE_SIZE)
+        self.eye.radius = EYE_RADIUS
+                
         self.init_x = init_x
         self.init_y = init_y
         self.init_pos = np.array((init_x, init_y))
@@ -63,6 +69,7 @@ class Head(pg.sprite.Sprite):
         self.radius = self.speed
         self.direction = np.array((0, 0))
         self.rect.center = self.init_pos
+        self.eye.rect.center = self.rect.center
         self.trace = self.rect
 
     def draw(self, screen):
@@ -74,6 +81,7 @@ class Head(pg.sprite.Sprite):
     def move(self):
         self.trace = self.rect
         self.rect = self.rect.move(self.speed  * self.direction)
+        self.eye.rect.center = self.rect.center + self.radius * self.direction
 
     def set_direction(self, dir):
         self.direction = dir
@@ -86,7 +94,6 @@ class Body(pg.sprite.Sprite):
 
     def __init__(self, head):
         pg.sprite.Sprite.__init__(self)
-        self.speed = SPEED
         self.radius = RADIUS
         self.head = head
         self.tail = None
@@ -155,8 +162,8 @@ class Snake():
             return True
         return False
     
-    def set_direction(self, pos):
-        self.head.set_direction(pos)
+    def set_direction(self, dir):
+        self.head.set_direction(dir)
 
 
 class Goal(pg.sprite.Sprite):
@@ -180,8 +187,7 @@ class Game:
         self.goals = pg.sprite.Group()
         self.create_goal()
         self.score = 0
-        self.theta = 0
-        self.pos = np.array([0,0])
+        self.dir = np.array([0.,0.])
         self.screen = pg.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
         self.display = False
 
@@ -210,8 +216,7 @@ class Game:
             info
         '''
         info = 'ok'
-        body_collision = pg.sprite.spritecollide(self.snake.head, self.snake.bodys, False, pg.sprite.collide_circle)
-        if body_collision:
+        if pg.sprite.spritecollide(self.snake.head.eye, self.snake.bodys, False, pg.sprite.collide_circle):
             self.snake.life -= 1
             info = 'body'
         if self.snake.boundary_collision():
@@ -229,8 +234,7 @@ class Game:
         return:
             info
         '''
-        # if self.pos:
-        self.snake.set_direction(self.pos)
+        self.snake.set_direction(self.dir)
         self.snake.update()
         info = self.collision()
         self.create_goal()
@@ -242,17 +246,9 @@ class Game:
         self.snake.draw(self.screen)
     
     def input(self, theta):
-        # if self.theta < - np.pi * 3 / 4
-        high = self.theta + np.pi / 4
-        low = self.theta - np.pi / 4
-        self.theta = np.clip(theta, low, high)
-        print(low, self.theta, high)
-        if self.theta > np.pi:
-            self.theta -= np.pi
-        elif self.theta < -np.pi:
-            self.theta += np.pi
-        # print(self.theta)
-        self.pos = np.array([np.cos(self.theta), np.sin(self.theta)])
+        direction = np.array([np.cos(theta), np.sin(theta)])
+        self.dir += SMOOTH * (direction - self.dir)
+        self.dir = normalize(self.dir)
 
     def init_render(self):
         self.screen = pg.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -305,6 +301,10 @@ class Env:
     def snapshot(self):
         pg.image.save(self.game.screen, 'snapshots/'+str(int(time.time()*10000))+'.png')
 
+
+def normalize(vec):
+    return vec / np.linalg.norm(vec)
+
 if __name__ == '__main__':
     os.environ['SDL_VIDEO_WINDOW_POS'] = "%d,%d" % (64, 64)
     clock = pg.time.Clock()
@@ -330,12 +330,10 @@ if __name__ == '__main__':
         heading = (pos - head)
         if heading[0]==0 and heading[1]==0:
             continue
-        pos = heading / np.sqrt(heading.dot(heading))
+        pos = normalize(heading)
         theta = np.arctan2(pos[1], pos[0])
         game.input(theta)
         game.update()
-        # print(pos, theta, [np.cos(theta), np.sin(theta)])
-        # print(game.snake.head.center, game.snake.head.direction, game.update())
         game.draw()
         if render:
             game.render()            
