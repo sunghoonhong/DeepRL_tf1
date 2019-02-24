@@ -11,6 +11,7 @@ import os
 import time
 import random
 import numpy as np
+from gym.spaces import Box
 import pygame as pg
 from pygame import gfxdraw as gdraw
     
@@ -261,7 +262,7 @@ class Game:
 
 class Env:
     def __init__(self):
-        self.action_size = 4
+        self.action_space = Box(low=-np.pi, high=np.pi, shape=(1,), dtype='float32')
         self.game = Game()
 
     def reset(self):
