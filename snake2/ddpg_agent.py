@@ -183,8 +183,8 @@ class DDPGAgent:
 
     def append_sample(self, s, a, r, ns, d):
         self.memory.append((s, a, r, ns, d))
-        if r > 0:
-            self.good_memory.append((s, a, r, ns, d))
+        # if r > 0:
+        #     self.good_memory.append((s, a, r, ns, d))
 
     def save_model(self, name):
         self.actor.save_weights('save_model/' + name + '_actor.h5')
@@ -238,7 +238,7 @@ if __name__ == '__main__':
             global_step += 1
 
             action = agent.get_action(history)[0][0]
-            print(action)   #
+            # print(action)   #
             next_observe, reward, done, info = env.step(action)
             next_state = preprocess(next_observe)
             next_state = np.reshape([next_state], (1, 1, RESIZE, RESIZE))
