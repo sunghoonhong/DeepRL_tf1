@@ -206,9 +206,11 @@ if __name__ == '__main__':
     # EPISODES = 500000
     if not os.path.exists('save_model'):
         os.makedirs('save_model')
+    if not os.path.exists('save_graph'):
+        os.makedirs('save_graph')
     episode = 0
-    if os.path.exists('output.csv'):
-        with open('output.csv', 'r') as f:
+    if os.path.exists('ddpg_output.csv'):
+        with open('ddpg_output.csv', 'r') as f:
             read = csv.reader(f)
             episode = int(next(reversed(list(read)))[0])
         print(episode)
