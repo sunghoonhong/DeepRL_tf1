@@ -1,3 +1,14 @@
+'''
+Author: Sunghoon Hong
+Title: ddpg_agent.py
+Version: 0.0.1
+Description: Deep Deterministic Policy Gradient
+Detail:
+    Target Model(Actor, Critic)
+    Experience Replay
+    1-TD
+'''
+
 
 import os
 import csv
