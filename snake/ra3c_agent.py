@@ -1,15 +1,15 @@
 '''
 Author: Sunghoon Hong
 Title: ra3c_agent.py
-Version: 0.0.7
+Version: 0.0.8
 Description: RA3C Agent
 Detail:
     Sequence size = 2
     Action size = 4
-    Weight of Entropy of actor loss = 0.1
+    Weight of Entropy of actor loss = 0.2
     Loss function of Critic = Huber loss
     Change lr to 5e-4
-    20-step TD
+    6-step TD
     2-layer CNN
     LSTM output = 512
     Modify discounted_prediction()
@@ -57,8 +57,8 @@ LOAD_MODEL = True
 VERBOSE = False
 
 # Hyper Parameter
-K_STEP = 20
-ENT_WEIGHT = 0.1
+K_STEP = 6
+ENT_WEIGHT = 0.2
 LR = 5e-4
 
 def preprocess(observe):
@@ -105,9 +105,6 @@ class A3CAgent:
             #     print('Next Update After %d (sec)' % (300-i*10), end='\r', flush=True)
             #     time.sleep(10)
             time.sleep(SAVE_STAT_TIME_RATE)
-            # avgScore, avgStep = self.play()
-            # print(self.stats)
-            # if len(self.stats) >= SAVE_STAT_RATE:
             if self.stats:
                 stats = np.copy(self.stats)
                 self.stats.clear()
