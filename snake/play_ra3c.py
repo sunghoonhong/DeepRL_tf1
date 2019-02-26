@@ -33,8 +33,8 @@ if not os.path.exists('save_model'):
     os.makedirs('save_model')
 
 EPISODES = 3
-DELAY = 1
-IMPROVE = 'e-greedy'
+DELAY = 0.1
+IMPROVE = 'policy'
 
 if __name__ == "__main__":
     global_agent = A3CAgent(
