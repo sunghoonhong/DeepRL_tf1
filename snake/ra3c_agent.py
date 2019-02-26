@@ -1,15 +1,16 @@
 '''
 Author: Sunghoon Hong
 Title: ra3c_agent.py
-Version: 0.0.8
+Version: 0.0.9
 Description: RA3C Agent
 Detail:
     Sequence size = 2
+    RESIZE = 40
     Action size = 4
-    Weight of Entropy of actor loss = 0.2
+    Weight of Entropy of actor loss = 0.1
     Loss function of Critic = Huber loss
-    Change lr to 5e-4
-    6-step TD
+    lr = 5e-4
+    5-step TD
     2-layer CNN
     LSTM output = 512
     Modify discounted_prediction()
@@ -30,7 +31,6 @@ from keras.layers import Dense, Flatten, Conv2D, Input, LSTM, TimeDistributed, R
 from keras.optimizers import Adam
 from keras import backend as K
 from PIL import ImageOps, Image
-from matplotlib import pyplot as plt
 from snake_env import Env, ACTION
 
 global episode
@@ -44,21 +44,19 @@ if os.path.exists('ra3c_output.csv'):
         read = csv.reader(f)
         episode = int(float(next(reversed(list(read)))[0]))
     print(episode)
-    
-EPISODES = 8000000
 
 SAVE_STAT_EPISODE_RATE = 100
-SAVE_STAT_TIME_RATE = 300 #sec
+SAVE_STAT_TIME_RATE = 600 #sec
 THREAD_NUM = 32
-RESIZE = 84
+RESIZE = 40
 TRAIN = True
 # TRAIN = False
 LOAD_MODEL = True
 VERBOSE = False
 
 # Hyper Parameter
-K_STEP = 6
-ENT_WEIGHT = 0.2
+K_STEP = 5
+ENT_WEIGHT = 0.1
 LR = 5e-4
 
 def preprocess(observe):
@@ -123,13 +121,13 @@ class A3CAgent:
         input = Input(shape=self.state_size)
         reshape = Reshape(state_size)(input)
 
-        conv = TimeDistributed(Conv2D(16, (8, 8), strides=(4, 4), activation='relu', kernel_initializer='he_normal'))(reshape)
-        conv = TimeDistributed(Conv2D(32, (4, 4), strides=(2, 2), activation='relu', kernel_initializer='he_normal'))(conv)
+        conv = TimeDistributed(Conv2D(16, (4, 4), strides=(2, 2), activation='relu'))(reshape)
+        conv = TimeDistributed(Conv2D(32, (3, 3), activation='relu'))(conv)
         conv = TimeDistributed(Flatten())(conv)
-        lstm = LSTM(512, activation='tanh', kernel_initializer='he_normal')(conv)
+        lstm = LSTM(512, activation='tanh')(conv)
 
-        policy = Dense(self.action_size, activation='softmax', kernel_initializer='he_normal')(lstm)
-        value = Dense(1, activation='linear', kernel_initializer='he_normal')(lstm)
+        policy = Dense(self.action_size, activation='softmax')(lstm)
+        value = Dense(1, activation='linear')(lstm)
 
         actor = Model(inputs=input, outputs=policy)
         critic = Model(inputs=input, outputs=value)
@@ -355,7 +353,7 @@ class Agent(threading.Thread):
         states = np.zeros((len(self.states), self.seq_size, RESIZE, RESIZE))
         for i in range(len(self.states)):
             states[i] = self.states[i]
-        values = self.local_critic.predict(states)
+        values = self.critic.predict(states)
         values = np.reshape(values, len(values))
 
         advantages = discounted_prediction - values
