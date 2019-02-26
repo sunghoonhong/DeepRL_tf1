@@ -1,14 +1,14 @@
 '''
 Author: Sunghoon Hong
 Title: snake_env.py
-Version: 4.0.0
+Version: 4.0.1
 Description: Snake game Environment
 Fix:
     (4.0.0)
     PIXEL_SIZE = 20
     Goal Reward = snake.len + 1
-
-
+    (4.0.1)
+    Goal Reward = +1
 '''
 
 import os
@@ -282,7 +282,7 @@ class Env:
         info = self.game.update()
         done = (self.game.snake.life <= 0)
         if info == 'goal':
-            reward = self.game.snake.len
+            reward = 1
         elif info == 'body':
             reward = -1
         elif info == 'boundary':
