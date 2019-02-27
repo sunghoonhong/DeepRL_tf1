@@ -4,7 +4,7 @@ Title: addpg_agent.py
 Version: 0.0.1
 Description: Asynchronus Deep Deterministic Policy Gradient
 Detail:
-    10-step TD
+    40-step TD
 '''
 
 
@@ -30,7 +30,7 @@ SAVE_STAT_TIME_RATE = 600
 
 RESIZE = 40
 SEQ_SIZE = 4
-K_STEP = 10
+K_STEP = 40
 THREAD_NUM = 32
 
 LOAD_MODEL = True
@@ -179,7 +179,7 @@ class ADDPGAgent:
         reshape = Reshape(state_size)(state)
 
         conv = TimeDistributed(Conv2D(16, (4, 4), strides=(2, 2), activation='relu'))(reshape)
-        conv = TimeDistributed(Conv2D(32, (3, 3), activation='relu'))(conv)
+        conv = TimeDistributed(Conv2D(32, (3, 3), strides=(2, 2), activation='relu'))(conv)
         conv = TimeDistributed(Flatten())(conv)
         
         lstm_state = LSTM(256, activation='relu')(conv)
@@ -189,7 +189,8 @@ class ADDPGAgent:
         actor = Model(inputs=state, outputs=action_output)
 
         action = Input([self.action_size])
-        state_action = Concatenate()([lstm_state, action])
+        fc_action = Dense(256, activation='relu')(action)
+        state_action = Concatenate()([lstm_state, fc_action])
         fc = Dense(256, activation='relu')(state_action)
         Q_output = Dense(1)(fc)
     
