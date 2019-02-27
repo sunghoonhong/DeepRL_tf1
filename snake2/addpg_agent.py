@@ -158,7 +158,8 @@ class ADDPGAgent:
                         try:
                             a = float(a)
                             action = [a]
-
+                        except:
+                            continue
                 next_observe, reward, done, info = env.step(action[0])
                 next_state = preprocess(next_observe)
                 next_state = np.reshape([next_state], (1, 1, RESIZE, RESIZE))
