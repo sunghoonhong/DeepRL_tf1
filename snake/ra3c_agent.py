@@ -196,7 +196,7 @@ class A3CAgent:
         action_index = np.random.choice(self.action_size, 1, p=policy)[0]
         return action_index, policy
 
-    def play(self, episodes=10, delay=0, improve='policy'):
+    def play(self, episodes=10, delay=0, improve='policy', debug=False):
         env = Env()
         if self.render:
             env.init_render()
@@ -216,6 +216,9 @@ class A3CAgent:
             history = np.reshape([history], (1, self.seq_size, RESIZE, RESIZE))
 
             while not done:
+                if debug:
+                    for snap in history[0]:
+                        Image.fromarray(snap*255.).show()
                 time.sleep(delay)
                 step += 1
                 if self.render:
@@ -228,7 +231,13 @@ class A3CAgent:
                 else:
                     real_action = action + 1
                 print(ACTION[action], '\t', ACTION[int(np.argmax(policy))], '\t', policy)
-
+                if debug:
+                    while True:
+                        a = input('Press y or action(1(up),2(down),3(left),4(right)):')
+                        if a==y:
+                            break
+                        elif a in ['1', '2', '3', '4']:
+                            real_action = int(a)
                 next_observe, reward, done, info = env.step(real_action)
                 next_state = preprocess(next_observe)
                 next_state = np.float32(next_state / 255.)
