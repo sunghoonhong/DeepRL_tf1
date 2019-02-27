@@ -4,7 +4,7 @@ Title: addpg_agent.py
 Version: 0.0.1
 Description: Asynchronus Deep Deterministic Policy Gradient
 Detail:
-    12-step TD
+    10-step TD
 '''
 
 
@@ -31,7 +31,7 @@ SAVE_STAT_TIME_RATE = 600
 RESIZE = 40
 SEQ_SIZE = 4
 K_STEP = 10
-THREAD_NUM = 4
+THREAD_NUM = 32
 
 LOAD_MODEL = True
 VERBOSE = False
