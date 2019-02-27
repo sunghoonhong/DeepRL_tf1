@@ -40,6 +40,7 @@ if __name__ == "__main__":
     global_agent = A3CAgent(
         load_model=True,
         verbose=False,
-        render=True
+        render=True,
+        debug=False
     )
     global_agent.play(EPISODES, DELAY, IMPROVE)
