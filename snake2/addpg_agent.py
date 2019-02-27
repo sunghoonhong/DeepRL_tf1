@@ -181,7 +181,7 @@ class ADDPGAgent:
         conv = TimeDistributed(Conv2D(32, (3, 3), activation='relu'))(conv)
         conv = TimeDistributed(Flatten())(conv)
         
-        lstm_state = LSTM(512, activation='relu')(conv)
+        lstm_state = LSTM(256, activation='relu')(conv)
         action_output = Dense(self.action_size, activation='tanh')(lstm_state)
         actor_output = Lambda(lambda x: x * np.pi)(action_output)
 
@@ -189,7 +189,7 @@ class ADDPGAgent:
 
         action = Input([self.action_size])
         state_action = Concatenate()([lstm_state, action])
-        fc = Dense(512, activation='relu')(state_action)
+        fc = Dense(256, activation='relu')(state_action)
         Q_output = Dense(1)(fc)
     
         critic = Model(inputs=[state, action], outputs=Q_output)
