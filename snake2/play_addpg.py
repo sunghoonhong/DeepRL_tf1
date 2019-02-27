@@ -32,6 +32,7 @@ if __name__ == "__main__":
     global_agent = ADDPGAgent(
         action_space=env.action_space,
         load_model=True,
-        render=True
+        render=True,
+        debug=False
     )
     global_agent.play(EPISODES, DELAY, IMPROVE)
