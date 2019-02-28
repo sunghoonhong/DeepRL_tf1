@@ -114,7 +114,7 @@ class A3CAgent:
                     for row in stats:
                         wr.writerow(row)
                 self.save_model('./save_model/ra3c')
-                mean = np.mean(stats, axis=0)
+                mean = np.mean(np.float32(np.split(stats, [-1], axis=1)[0]), axis=0)
                 print('%s\t%s Episodes Trained! AvgScore:%s AvgStep:%s AvgPmax:%s' 
                         % (dt.now().strftime('%Y-%m-%d %H:%M:%S'), 
                         len(stats), mean[3], mean[1], mean[4]), end='/r')

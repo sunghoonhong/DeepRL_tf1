@@ -121,7 +121,7 @@ class ADDPGAgent:
                     for row in stats:
                         wr.writerow(row)
                 self.save_model('addpg')
-                mean = np.mean(stats, axis=0)
+                mean = np.mean(np.float32(np.split(stats, [-1], axis=1)[0]), axis=0)
                 print('%s\t%s Episodes Trained! AvgScore:%s AvgStep:%s' 
                         % (dt.now().strftime('%Y-%m-%d %H:%M:%S'), 
                         len(stats), mean[3], mean[1]), end='/r')
