@@ -4,7 +4,7 @@ Title: addpg_agent.py
 Version: 0.0.1
 Description: Asynchronus Deep Deterministic Policy Gradient
 Detail:
-    40-step TD
+    20-step TD
 '''
 
 
@@ -30,7 +30,7 @@ SAVE_STAT_TIME_RATE = 600
 
 RESIZE = 40
 SEQ_SIZE = 4
-K_STEP = 40
+K_STEP = 20
 THREAD_NUM = 32
 
 LOAD_MODEL = True
@@ -71,8 +71,8 @@ class ADDPGAgent:
         
         # Hyper-Parameter
         self.threads = THREAD_NUM
-        self.actor_lr = 1e-6
-        self.critic_lr = 2.5e-5
+        self.actor_lr = 1e-3
+        self.critic_lr = 1e-3
         self.gamma = 0.99
 
         # TF Session
@@ -179,19 +179,19 @@ class ADDPGAgent:
         reshape = Reshape(state_size)(state)
 
         conv = TimeDistributed(Conv2D(16, (4, 4), strides=(2, 2), activation='relu'))(reshape)
-        conv = TimeDistributed(Conv2D(32, (3, 3), strides=(2, 2), activation='relu'))(conv)
+        conv = TimeDistributed(Conv2D(32, (3, 3), activation='relu'))(conv)
         conv = TimeDistributed(Flatten())(conv)
         
-        lstm_state = LSTM(256, activation='relu')(conv)
+        lstm_state = LSTM(400, activation='relu')(conv)
         action_output = Dense(self.action_size, activation='tanh')(lstm_state)
         actor_output = Lambda(lambda x: x * np.pi)(action_output)
 
         actor = Model(inputs=state, outputs=action_output)
 
         action = Input([self.action_size])
-        fc_action = Dense(256, activation='relu')(action)
+        fc_action = Dense(400, activation='relu')(action)
         state_action = Concatenate()([lstm_state, fc_action])
-        fc = Dense(256, activation='relu')(state_action)
+        fc = Dense(400, activation='relu')(state_action)
         Q_output = Dense(1)(fc)
     
         critic = Model(inputs=[state, action], outputs=Q_output)
