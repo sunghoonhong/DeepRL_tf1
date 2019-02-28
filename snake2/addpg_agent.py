@@ -1,10 +1,10 @@
 '''
 Author: Sunghoon Hong
 Title: addpg_agent.py
-Version: 0.0.1
+Version: 0.0.3
 Description: Asynchronus Deep Deterministic Policy Gradient
 Detail:
-    20-step TD
+    80-step TD(lambda)
 '''
 
 
@@ -13,6 +13,7 @@ import time
 import csv
 import random
 import threading
+from datetime import datetime as dt
 import numpy as np
 import gym
 from keras import backend as K
@@ -30,7 +31,7 @@ SAVE_STAT_TIME_RATE = 600
 
 RESIZE = 40
 SEQ_SIZE = 4
-K_STEP = 20
+K_STEP = 80
 THREAD_NUM = 32
 
 LOAD_MODEL = True
@@ -72,8 +73,9 @@ class ADDPGAgent:
         # Hyper-Parameter
         self.threads = THREAD_NUM
         self.actor_lr = 1e-3
-        self.critic_lr = 1e-3
-        self.gamma = 0.99
+        self.critic_lr = 1e-4
+        self.gamma = 0.95
+        self.lam = 0.6
 
         # TF Session
         self.sess = tf.Session()
@@ -98,14 +100,14 @@ class ADDPGAgent:
     def train(self):
         workers = [Worker(tid, self.action_size, [self.action_low, self.action_high], self.state_size,
                         [self.actor, self.critic], [self.actor_update, self.critic_update],
-                        self.gamma, self.seq_size, self.build_model,
+                        self.gamma, self.lam, self.seq_size, self.build_model,
                         self.sess, self.stats)
                   for tid in range(self.threads)]
 
         for worker in workers:
             time.sleep(1)
             worker.start()
-
+        print(dt.now().strftime('%Y-%m-%d %H:%M:%S'), '%s Workers Ready!' % self.threads)
         while True:
             # for i in range(30):
             #     print('Next Update After %d (sec)' % (300-i*10), end='\r', flush=True)
@@ -119,9 +121,14 @@ class ADDPGAgent:
                     for row in stats:
                         wr.writerow(row)
                 self.save_model('addpg')
+                mean = np.mean(stats, axis=0)
+                print('%s\t%s Episodes Trained! AvgScore:%s AvgStep:%s' 
+                        % (dt.now().strftime('%Y-%m-%d %H:%M:%S'), 
+                        len(stats), mean[3], mean[1]), end='/r')
                 stats = None
-                print('Global Model Updated!')
-    
+            else:
+                print('%s\tNo Episodes...' % (dt.now().strftime('%Y-%m-%d %H:%M:%S')))
+                    
     def play(self, episodes=3, delay=0.1, imporve='policy', debug=False):
         env = Env()
         for episode in range(1, episodes+1):
@@ -238,7 +245,6 @@ class ADDPGAgent:
     def save_model(self, name):
         self.actor.save_weights('save_model/' + name + '_actor.h5')
         self.critic.save_weights('save_model/' + name + '_critic.h5')
-        print('Model Saved\n')
 
     def load_model(self, name):
         if os.path.exists('save_model/' + name + '_actor.h5'):
@@ -251,7 +257,7 @@ class ADDPGAgent:
 
 class Worker(threading.Thread):
     def __init__(self, tid, action_size, action_range, state_size,
-                model, optimizer, gamma, seq_size,
+                model, optimizer, gamma, lam, seq_size,
                 build_model, sess, stats):
         threading.Thread.__init__(self)
 
@@ -262,6 +268,7 @@ class Worker(threading.Thread):
         self.actor, self.critic = model
         self.actor_update, self.critic_update = optimizer
         self.gamma = gamma
+        self.lam = lam
         self.seq_size = seq_size
         self.stats = stats
 
@@ -275,7 +282,7 @@ class Worker(threading.Thread):
 
         self.t_max = K_STEP
         self.t = 0
-        print('Agent %d Ready!' % self.tid)
+        # print('Agent %d Ready!' % self.tid)
 
     def run(self):
         global episode
@@ -334,28 +341,45 @@ class Worker(threading.Thread):
                     self.critic_loss = 0
                     step = 0
 
-    def discounted_prediction(self, next_history, rewards, done):
-        discounted_prediction = np.zeros_like(rewards)
-        running_add = 0
-        next_action = self.actor.predict(next_history)
-        if not done:
-            running_add = self.critic.predict([next_history, next_action])[0]
+    # def discounted_prediction(self, next_history, rewards, done):
+    #     discounted_prediction = np.zeros_like(rewards)
+    #     running_add = 0
+    #     next_action = self.actor.predict(next_history)
+    #     if not done:
+    #         running_add = self.critic.predict([next_history, next_action])[0]
 
-        for t in reversed(range(0, len(rewards))):
-            running_add = running_add * self.gamma + rewards[t]
-            discounted_prediction[t] = running_add
-        return discounted_prediction
+    #     for t in reversed(range(0, len(rewards))):
+    #         running_add = running_add * self.gamma + rewards[t]
+    #         discounted_prediction[t] = running_add
+    #     return discounted_prediction
 
     def train_model(self, next_history, done):
-        discounted_prediction = self.discounted_prediction(next_history, self.rewards, done)
-        states = np.zeros((len(self.states), self.seq_size, RESIZE, RESIZE))
+        states = np.zeros((len(self.states) + 1, self.seq_size, RESIZE, RESIZE))
         for i in range(len(self.states)):
             states[i] = self.states[i]
+        states[len(self.states)] = next_history
 
-        pred_actions = self.local_actor.predict(states)
+        pred_actions = self.actor.predict(states)
 
-        critic_loss = self.critic_update([states, self.actions, discounted_prediction])
-        self.actor_update([states, pred_actions])
+        Qvalues = self.critic.predict([states, pred_actions])
+        Qvalues = np.reshape(Qvalues, len(Qvalues))
+
+        # discounted prediction with TD lambda
+        lambda_pred = np.zeros_like(self.rewards)
+        G_lambda = 0
+        if not done:
+            G_lambda = Qvalues[-1]
+
+        for t in reversed(range(0, len(self.rewards))):
+            G_lambda = ( self.rewards[t] + self.gamma * 
+                (self.lam * G_lambda + (1-self.lam) * Qvalues[t+1]) 
+            )
+            lambda_pred[t] = G_lambda
+
+        adv_critic = lambda_pred - Qvalues[:-1]
+
+        critic_loss = self.critic_update([states[:-1], self.actions, adv_critic])
+        self.actor_update([states[:-1], pred_actions[:-1]])
 
         self.states, self.actions, self.rewards = [], [], []
         return critic_loss

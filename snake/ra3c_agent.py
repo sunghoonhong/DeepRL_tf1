@@ -1,7 +1,7 @@
 '''
 Author: Sunghoon Hong
 Title: ra3c_agent.py
-Version: 0.0.9
+Version: 0.1.0
 Description: RA3C Agent
 Detail:
     Sequence size = 2
@@ -9,8 +9,8 @@ Detail:
     Action size = 4
     Weight of Entropy of actor loss = 0.1
     Loss function of Critic = Huber loss
-    lr = 5e-4
-    5-step TD
+    lr = 2.5e-4
+    20-step TD
     2-layer CNN
     LSTM output = 512
     Modify discounted_prediction()
@@ -22,6 +22,7 @@ import time
 import random
 import threading
 import csv
+from datetime import datetime as dt
 from collections import deque
 import numpy as np
 import tensorflow as tf
@@ -55,9 +56,9 @@ LOAD_MODEL = True
 VERBOSE = False
 
 # Hyper Parameter
-K_STEP = 5
+K_STEP = 20
 ENT_WEIGHT = 0.1
-LR = 5e-4
+LR = 2.5e-4
 
 def preprocess(observe):
     ret = Image.fromarray(observe)
@@ -69,12 +70,14 @@ class A3CAgent:
     def __init__(self, verbose=False, load_model=True, render=False):
         self.verbose = verbose
         self.render = render
+
         # hyperparameter
         self.seq_size = 2
-        self.discount = 0.99
+        self.discount = 0.95
         self.actor_lr = LR
         self.critic_lr = LR
         self.threads = THREAD_NUM
+        self.lam = 0.6
 
         self.state_size = (self.seq_size, RESIZE, RESIZE)
         self.action_size = 4
@@ -90,14 +93,14 @@ class A3CAgent:
     def train(self):
         agents = [Agent(tid, self.action_size, self.state_size,
                         [self.actor, self.critic], self.optimizer,
-                        self.discount, self.seq_size, self.build_model,
+                        self.lam, self.discount, self.seq_size, self.build_model,
                         self.stats)
                   for tid in range(self.threads)]
 
         for agent in agents:
             time.sleep(1)
             agent.start()
-
+        print(dt.now().strftime('%Y-%m-%d %H:%M:%S'), '%s agents Ready!' % self.threads)
         while True:
             # for i in range(30):
             #     print('Next Update After %d (sec)' % (300-i*10), end='\r', flush=True)
@@ -111,9 +114,13 @@ class A3CAgent:
                     for row in stats:
                         wr.writerow(row)
                 self.save_model('./save_model/ra3c')
+                mean = np.mean(stats, axis=0)
+                print('%s\t%s Episodes Trained! AvgScore:%s AvgStep:%s AvgPmax:%s' 
+                        % (dt.now().strftime('%Y-%m-%d %H:%M:%S'), 
+                        len(stats), mean[3], mean[1], mean[4]), end='/r')
                 stats = None
-                print('Global Model Updated!')
-        
+            else:
+                print('%s\tNo Episodes...' % (dt.now().strftime('%Y-%m-%d %H:%M:%S')))        
 
     def build_model(self):
         state_size = list(self.state_size)
@@ -121,13 +128,13 @@ class A3CAgent:
         input = Input(shape=self.state_size)
         reshape = Reshape(state_size)(input)
 
-        conv = TimeDistributed(Conv2D(16, (4, 4), strides=(2, 2), activation='relu'))(reshape)
-        conv = TimeDistributed(Conv2D(32, (3, 3), activation='relu'))(conv)
+        conv = TimeDistributed(Conv2D(16, (4, 4), strides=(2, 2), activation='relu', kernel_initializer='he_normal'))(reshape)
+        conv = TimeDistributed(Conv2D(32, (3, 3), activation='relu', kernel_initializer='he_normal'))(conv)
         conv = TimeDistributed(Flatten())(conv)
-        lstm = LSTM(512, activation='tanh')(conv)
+        lstm = LSTM(512, activation='tanh', kernel_initializer='he_normal')(conv)
 
-        policy = Dense(self.action_size, activation='softmax')(lstm)
-        value = Dense(1, activation='linear')(lstm)
+        policy = Dense(self.action_size, activation='softmax', kernel_initializer='he_normal')(lstm)
+        value = Dense(1, activation='linear', kernel_initializer='he_normal')(lstm)
 
         actor = Model(inputs=input, outputs=policy)
         critic = Model(inputs=input, outputs=value)
@@ -198,8 +205,6 @@ class A3CAgent:
 
     def play(self, episodes=10, delay=0, improve='policy', debug=False):
         env = Env()
-        if self.render:
-            env.init_render()
         scores = 0
         steps = 0
         print('Random\tGreedy\tPolicy')
@@ -256,7 +261,7 @@ class A3CAgent:
 
 class Agent(threading.Thread):
     def __init__(self, tid, action_size, state_size, model,
-                 optimizer, discount, seq_size,
+                 optimizer, lam, discount, seq_size,
                  build_model, stats):
         threading.Thread.__init__(self)
 
@@ -268,6 +273,7 @@ class Agent(threading.Thread):
         self.discount = discount
         self.seq_size = seq_size
         self.stats = stats
+        self.lam = lam
 
         self.states, self.actions, self.rewards = [], [], []
 
@@ -281,7 +287,7 @@ class Agent(threading.Thread):
 
         self.t_max = K_STEP
         self.t = 0
-        print('Agent %d Ready!' % self.tid)
+        # print('Agent %d Ready!' % self.tid)
 
     def run(self):
         global episode
@@ -345,30 +351,51 @@ class Agent(threading.Thread):
                     self.critic_loss = 0
                     step = 0
 
-    def discounted_prediction(self, next_history, rewards, done):
-        discounted_prediction = np.zeros_like(rewards)
-        running_add = 0
+    # def discounted_prediction(self, next_history, rewards, done):
+    #     reward_pred = np.zeros_like(rewards)
+    #     lambda_pred = np.zeros_like(rewards)
+    #     R = R_lambda = 0
+    #     value_pred = self.local_critic.predict(self.states)
+    #     if not done:
+    #         R = R_lambda = self.local_critic.predict(next_history)[0]
 
-        if not done:
-            running_add = self.local_critic.predict(next_history)[0]
-
-        for t in reversed(range(0, len(rewards))):
-            running_add = running_add * self.discount + rewards[t]
-            discounted_prediction[t] = running_add
-        return discounted_prediction
+    #     for t in reversed(range(0, len(rewards))):
+    #         R = self.discount * R + rewards[t]
+    #         R_lambda = ( rewards[t] + self.discount * 
+    #             (self.lam * R + (1-self.lam) * self.local_critic.predict(states[t+1]))
+    #         )
+    #         reward_pred[t] = R
+    #     return reward_pred
 
     def train_model(self, next_history, done):
-        discounted_prediction = self.discounted_prediction(next_history, self.rewards, done)
-        states = np.zeros((len(self.states), self.seq_size, RESIZE, RESIZE))
+        # discounted_prediction = self.discounted_prediction(next_history, self.rewards, done)
+        states = np.zeros((len(self.states) + 1, self.seq_size, RESIZE, RESIZE))
         for i in range(len(self.states)):
             states[i] = self.states[i]
+        states[len(self.states)] = next_history
         values = self.critic.predict(states)
         values = np.reshape(values, len(values))
 
-        advantages = discounted_prediction - values
+        # discounted prediction with TD lambda
+        reward_pred = np.zeros_like(self.rewards)
+        lambda_pred = np.zeros_like(self.rewards)
+        R = R_lambda = 0
+        if not done:
+            R = R_lambda = values[-1]
 
-        actor_loss = self.optimizer[0]([states, self.actions, advantages])
-        critic_loss = self.optimizer[1]([states, discounted_prediction])
+        for t in reversed(range(0, len(self.rewards))):
+            R = self.discount * R + self.rewards[t]
+            R_lambda = ( self.rewards[t] + self.discount * 
+                (self.lam * R_lambda + (1-self.lam) * values[t+1]) 
+            )
+            reward_pred[t] = R
+            lambda_pred[t] = R_lambda
+
+        adv_actor = reward_pred - values[:-1]
+        adv_critic = lambda_pred - values[:-1]
+
+        actor_loss = self.optimizer[0]([states[:-1], self.actions, adv_actor])
+        critic_loss = self.optimizer[1]([states[:-1], adv_critic])
         self.states, self.actions, self.rewards = [], [], []
         return actor_loss, critic_loss
 
