@@ -32,6 +32,7 @@ if not os.path.exists('save_graph/ra3c_agent'):
 if not os.path.exists('save_model'):
     os.makedirs('save_model')
 
+DEBUG = False
 EPISODES = 3
 DELAY = 0.1
 IMPROVE = 'policy'
@@ -40,7 +41,6 @@ if __name__ == "__main__":
     global_agent = A3CAgent(
         load_model=True,
         verbose=False,
-        render=True,
-        debug=False
+        render=True
     )
-    global_agent.play(EPISODES, DELAY, IMPROVE)
+    global_agent.play(EPISODES, DELAY, IMPROVE, DEBUG)
