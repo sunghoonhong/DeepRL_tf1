@@ -265,11 +265,11 @@ class Game:
 
 class Env:
     def __init__(self):
+        pg.init()
         self.action_size = 4
         self.game = Game()
 
     def reset(self):
-        pg.init()
         self.game.reset()
         self.game.draw()
         observe = pg.surfarray.array3d(self.game.screen)

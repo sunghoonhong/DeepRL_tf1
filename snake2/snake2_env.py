@@ -262,11 +262,11 @@ class Game:
 
 class Env:
     def __init__(self):
+        pg.init()
         self.action_space = Box(low=-np.pi, high=np.pi, shape=(1,), dtype='float32')
         self.game = Game()
 
     def reset(self):
-        pg.init()
         self.game.reset()
         self.game.draw()
         observe = pg.surfarray.array3d(self.game.screen)
