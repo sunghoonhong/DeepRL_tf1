@@ -1,7 +1,7 @@
 '''
 Author: Sunghoon Hong
 Title: snake_env.py
-Version: 4.0.1
+Version: 4.0.2
 Description: Snake game Environment
 Fix:
     (4.0.0)
@@ -9,6 +9,10 @@ Fix:
     Goal Reward = snake.len + 1
     (4.0.1)
     Goal Reward = +1
+    (4.0.2)
+    Goal Reward = snake.len
+    (4.0.3)
+    Normal Reward = -0.001
 '''
 
 import os
@@ -279,16 +283,17 @@ class Env:
         if self.game.display:
             pg.event.pump()
         self.game.keydown(action)
+        snake_len = self.game.snake.len
         info = self.game.update()
         done = (self.game.snake.life <= 0)
         if info == 'goal':
-            reward = 1
+            reward = snake_len
         elif info == 'body':
             reward = -1
         elif info == 'boundary':
             reward = -1
         else:
-            reward = 0
+            reward = -0.001
             
         self.game.draw()
         observe = pg.surfarray.array3d(self.game.screen)
