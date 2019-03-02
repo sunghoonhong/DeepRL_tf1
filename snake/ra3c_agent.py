@@ -1,7 +1,7 @@
 '''
 Author: Sunghoon Hong
 Title: ra3c_agent.py
-Version: 0.1.0
+Version: 0.1.2
 Description: RA3C Agent
 Detail:
     Sequence size = 2
@@ -9,12 +9,12 @@ Detail:
     Action size = 4
     Weight of Entropy of actor loss = 0.1
     Loss function of Critic = Huber loss
-    lr = 2.5e-4
+    lr = 1e-4
     20-step TD
     2-layer CNN
     LSTM output = 512
-    Modify discounted_prediction()
-
+    Apply TD-lambda
+    Fix history sequence order error
 '''
 
 import os   
@@ -22,6 +22,8 @@ import time
 import random
 import threading
 import csv
+import argparse
+from copy import deepcopy
 from datetime import datetime as dt
 from collections import deque
 import numpy as np
@@ -46,9 +48,21 @@ if os.path.exists('ra3c_output.csv'):
         episode = int(float(next(reversed(list(read)))[0]))
     print(episode)
 
-SAVE_STAT_EPISODE_RATE = 100
-SAVE_STAT_TIME_RATE = 600 #sec
-THREAD_NUM = 32
+parser = argparse.ArgumentParser()
+parser.add_argument('--save_rate', type=int, default=300)
+parser.add_argument('--threads', type=int, default=32)
+parser.add_argument('--tmax', type=int, default=20)
+parser.add_argument('--lr', type=float, default=1e-4)
+parser.add_argument('--entropy', type=float, default=0.1)
+parser.add_argument('--lambd', type=float, default=0.6)
+parser.add_argument('--seqsize', type=int, default=2)
+parser.add_argument('--gamma', type=float, default=0.99)
+parser.add_argument('--reward', type=str, default='default')
+
+args = parser.parse_args()
+
+SAVE_STAT_TIME_RATE = args.save_rate #sec
+THREAD_NUM = args.threads
 RESIZE = 40
 TRAIN = True
 # TRAIN = False
@@ -56,9 +70,13 @@ LOAD_MODEL = True
 VERBOSE = False
 
 # Hyper Parameter
-K_STEP = 20
-ENT_WEIGHT = 0.1
-LR = 2.5e-4
+K_STEP = args.tmax
+ENT_WEIGHT = args.entropy
+LR = args.lr
+LAMBDA = args.lambd
+SEQ_SIZE = args.seqsize
+GAMMA = args.gamma
+REWARD_CLIP = args.reward
 
 def preprocess(observe):
     ret = Image.fromarray(observe)
@@ -72,12 +90,12 @@ class A3CAgent:
         self.render = render
 
         # hyperparameter
-        self.seq_size = 2
-        self.discount = 0.95
+        self.seq_size = SEQ_SIZE
+        self.gamma = GAMMA
         self.actor_lr = LR
         self.critic_lr = LR
         self.threads = THREAD_NUM
-        self.lam = 0.6
+        self.lambd = LAMBDA
 
         self.state_size = (self.seq_size, RESIZE, RESIZE)
         self.action_size = 4
@@ -93,7 +111,7 @@ class A3CAgent:
     def train(self):
         agents = [Agent(tid, self.action_size, self.state_size,
                         [self.actor, self.critic], self.optimizer,
-                        self.lam, self.discount, self.seq_size, self.build_model,
+                        self.lambd, self.gamma, self.seq_size, self.build_model,
                         self.stats)
                   for tid in range(self.threads)]
 
@@ -107,7 +125,7 @@ class A3CAgent:
             #     time.sleep(10)
             time.sleep(SAVE_STAT_TIME_RATE)
             if self.stats:
-                stats = np.copy(self.stats)
+                stats = deepcopy(self.stats)
                 self.stats.clear()
                 with open('ra3c_output.csv', 'a', encoding='utf-8', newline='') as f:
                     wr = csv.writer(f)
@@ -115,12 +133,12 @@ class A3CAgent:
                         wr.writerow(row)
                 self.save_model('./save_model/ra3c')
                 mean = np.mean(np.float32(np.split(stats, [-1], axis=1)[0]), axis=0)
-                print('%s\t%s Episodes Trained! AvgScore:%s AvgStep:%s AvgPmax:%s' 
+                print('%s: %s Episodes Trained! AvgScore:%s AvgStep:%s AvgPmax:%s' 
                         % (dt.now().strftime('%Y-%m-%d %H:%M:%S'), 
-                        len(stats), mean[3], mean[1], mean[4]), end='/r')
+                        len(stats), mean[3], mean[1], mean[4]))
                 stats = None
             else:
-                print('%s\tNo Episodes...' % (dt.now().strftime('%Y-%m-%d %H:%M:%S')))        
+                print('%s: No Episodes...' % (dt.now().strftime('%Y-%m-%d %H:%M:%S')))
 
     def build_model(self):
         state_size = list(self.state_size)
@@ -128,11 +146,10 @@ class A3CAgent:
         input = Input(shape=self.state_size)
         reshape = Reshape(state_size)(input)
 
-        conv = TimeDistributed(Conv2D(16, (4, 4), strides=(2, 2), activation='relu', kernel_initializer='he_normal'))(reshape)
-        conv = TimeDistributed(Conv2D(32, (3, 3), activation='relu', kernel_initializer='he_normal'))(conv)
+        conv = TimeDistributed(Conv2D(16, (4, 4), strides=(2, 2), padding='same', activation='relu', kernel_initializer='he_normal'))(reshape)
+        conv = TimeDistributed(Conv2D(32, (4, 4), strides=(2, 2), activation='relu', kernel_initializer='he_normal'))(conv)
         conv = TimeDistributed(Flatten())(conv)
         lstm = LSTM(512, activation='tanh', kernel_initializer='he_normal')(conv)
-
         policy = Dense(self.action_size, activation='softmax', kernel_initializer='he_normal')(lstm)
         value = Dense(1, activation='linear', kernel_initializer='he_normal')(lstm)
 
@@ -214,20 +231,15 @@ class A3CAgent:
             observe, _, _, _ = env.reset()
             state = preprocess(observe).reshape((1, RESIZE, RESIZE))
             state = np.float32(state / 255.)
-            history = np.copy(state)
-            for _ in range(self.seq_size - 1):
-                history = np.append(history, state, axis=0)
-                state = np.copy(state)
-            history = np.reshape([history], (1, self.seq_size, RESIZE, RESIZE))
-
+            history = np.stack([state] * self.seq_size, axis=1)
             while not done:
-                if debug:
-                    for snap in history[0]:
-                        Image.fromarray(snap*255.).show()
                 time.sleep(delay)
                 step += 1
                 if self.render:
                     env.render()
+                    if debug:
+                        for snap in history[0]:
+                            Image.fromarray(snap*255.).show()
                 action, policy = self.get_action(history)
                 if improve == 'greedy':
                     real_action = int(np.argmax(policy)) + 1
@@ -239,16 +251,15 @@ class A3CAgent:
                 if debug:
                     while True:
                         a = input('Press y or action(1(up),2(down),3(left),4(right)):')
-                        if a==y:
+                        if a=='y':
                             break
-                        elif a in ['1', '2', '3', '4']:
+                        elif a in [1, 2, 3, 4]:
                             real_action = int(a)
                 next_observe, reward, done, info = env.step(real_action)
-                next_state = preprocess(next_observe)
+                next_state = preprocess(next_observe).reshape((1, RESIZE, RESIZE))
                 next_state = np.float32(next_state / 255.)
-                next_state = np.reshape([next_state], (1, 1, RESIZE, RESIZE))
-                next_history = np.append(next_state, history[:, :(self.seq_size-1), :, :], axis=1)
-
+                next_history = np.append(history[0][1:], next_state, axis=0)
+                next_history = np.float32([next_history])
                 history = next_history
 
             steps += step
@@ -261,7 +272,7 @@ class A3CAgent:
 
 class Agent(threading.Thread):
     def __init__(self, tid, action_size, state_size, model,
-                 optimizer, lam, discount, seq_size,
+                 optimizer, lambd, gamma, seq_size,
                  build_model, stats):
         threading.Thread.__init__(self)
 
@@ -270,10 +281,10 @@ class Agent(threading.Thread):
         self.state_size = state_size
         self.actor, self.critic = model
         self.optimizer = optimizer
-        self.discount = discount
+        self.gamma = gamma
         self.seq_size = seq_size
         self.stats = stats
-        self.lam = lam
+        self.lambd = lambd
 
         self.states, self.actions, self.rewards = [], [], []
 
@@ -285,6 +296,7 @@ class Agent(threading.Thread):
         self.actor_loss = 0
         self.critic_loss = 0
 
+        self.top_score = 1
         self.t_max = K_STEP
         self.t = 0
         # print('Agent %d Ready!' % self.tid)
@@ -302,21 +314,20 @@ class Agent(threading.Thread):
 
             state = preprocess(observe).reshape((1, RESIZE, RESIZE))
             state = np.float32(state / 255.)
-            history = np.copy(state)
-            for _ in range(self.seq_size - 1):
-                history = np.append(history, state, axis=0)
-                state = np.copy(state)
-            history = np.reshape([history], (1, self.seq_size, RESIZE, RESIZE))
+            history = np.stack([state] * self.seq_size, axis=1)
 
             while not done:
                 step += 1
                 self.t += 1
                 action, policy = self.get_action(history)
-                next_observe, reward, done, info = env.step(action + 1)
-                next_state = preprocess(next_observe)
-                next_state = np.reshape([next_state], (1, 1, RESIZE, RESIZE))
+                real_action = action + 1
+                next_observe, reward, done, info = env.step(real_action)
+                if REWARD_CLIP == 'clip':
+                    reward = np.clip(reward, -1.0, 1.0)
+                next_state = preprocess(next_observe).reshape((1, RESIZE, RESIZE))
                 next_state = np.float32(next_state / 255.)
-                next_history = np.append(next_state, history[:, :(self.seq_size-1), :, :], axis=1)
+                next_history = np.append(history[0][1:], next_state, axis=0)
+                next_history = np.float32([next_history])
 
                 self.avg_p_max += np.amax(policy)
                 self.reward_sum += reward
@@ -325,15 +336,18 @@ class Agent(threading.Thread):
                 history = next_history
 
                 if self.t >= self.t_max or done:
+                    self.t = 0
+                    # if env.game.score > self.top_score:
+                    #     self.top_score = env.game.score
+                    #   # forget bad memory
+                    # if np.random.uniform() * self.top_score > env.game.score + 0.1 :
                     actor_loss, critic_loss = self.train_model(next_history, done)
                     self.actor_loss += abs(actor_loss[0])
                     self.critic_loss += abs(critic_loss[0])
                     self.update_local_model()
-                    self.t = 0
 
                 if done:
                     episode += 1
-                    # print("episode:", episode, "  score:", env.game.score, "  step:", step)
                     avg_p_max = self.avg_p_max / float(step)
                     train_num = step // self.t_max + 1
                     avg_actor_loss = self.actor_loss / train_num
@@ -351,24 +365,7 @@ class Agent(threading.Thread):
                     self.critic_loss = 0
                     step = 0
 
-    # def discounted_prediction(self, next_history, rewards, done):
-    #     reward_pred = np.zeros_like(rewards)
-    #     lambda_pred = np.zeros_like(rewards)
-    #     R = R_lambda = 0
-    #     value_pred = self.local_critic.predict(self.states)
-    #     if not done:
-    #         R = R_lambda = self.local_critic.predict(next_history)[0]
-
-    #     for t in reversed(range(0, len(rewards))):
-    #         R = self.discount * R + rewards[t]
-    #         R_lambda = ( rewards[t] + self.discount * 
-    #             (self.lam * R + (1-self.lam) * self.local_critic.predict(states[t+1]))
-    #         )
-    #         reward_pred[t] = R
-    #     return reward_pred
-
     def train_model(self, next_history, done):
-        # discounted_prediction = self.discounted_prediction(next_history, self.rewards, done)
         states = np.zeros((len(self.states) + 1, self.seq_size, RESIZE, RESIZE))
         for i in range(len(self.states)):
             states[i] = self.states[i]
@@ -384,9 +381,9 @@ class Agent(threading.Thread):
             R = R_lambda = values[-1]
 
         for t in reversed(range(0, len(self.rewards))):
-            R = self.discount * R + self.rewards[t]
-            R_lambda = ( self.rewards[t] + self.discount * 
-                (self.lam * R_lambda + (1-self.lam) * values[t+1]) 
+            R = self.gamma * R + self.rewards[t]
+            R_lambda = ( self.rewards[t] + self.gamma * 
+                (self.lambd * R_lambda + (1-self.lambd) * values[t+1]) 
             )
             reward_pred[t] = R
             lambda_pred[t] = R_lambda
