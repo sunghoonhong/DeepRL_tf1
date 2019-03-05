@@ -30,6 +30,8 @@ WINDOW_HEIGHT = 400
 
 GRID_LEN = 20
 GRID_SIZE = (GRID_LEN, GRID_LEN)
+GRID_WIDTH = WINDOW_WIDTH // GRID_LEN
+GRID_HEIGHT = WINDOW_HEIGHT // GRID_LEN
 # time
 FPS = 20  # This variable will define how many frames we update per second.
 DELAY = 0.1
