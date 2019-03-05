@@ -209,7 +209,7 @@ class A3CAgent:
         action_index = np.random.choice(self.action_size, 1, p=policy)[0]
         return action_index, policy
 
-    def play(self, episodes=10, delay=0, improve='policy', debug=False):
+    def play(self, episodes=10, delay=0, improve='policy', debug=False, SNAPSHOT=False):
         env = Env()
         scores = 0
         steps = 0
@@ -222,15 +222,16 @@ class A3CAgent:
             state = np.float32(state / 255.)
             history = np.stack([state] * self.seq_size, axis=1)
             while not done:
-                time.sleep(delay)
-                step += 1
                 if self.render:
                     env.render()
-                    if debug:
+                    if SNAPSHOT:
                         snapshot = np.array([]).reshape([0,RESIZE])
                         for snap in history[0]:
                             snapshot = np.append(snapshot, snap, axis=0)
                         Image.fromarray(snapshot*255.).show()
+                
+                time.sleep(delay)
+                step += 1
                 action, policy = self.get_action(history)
                 if improve == 'greedy':
                     real_action = int(np.argmax(policy)) + 1
@@ -238,14 +239,16 @@ class A3CAgent:
                     real_action = int(np.argmax(policy)) + 1 if np.random.uniform(low=0.0, high=1.0) > 0.1 else action + 1
                 else:
                     real_action = action + 1
-                print(ACTION[action], '\t', ACTION[int(np.argmax(policy))], '\t', policy)
+                value = self.critic.predict(history)
+                print(value, '\t', ACTION[action], '\t', ACTION[int(np.argmax(policy))], '\t', policy)
                 if debug:
                     while True:
                         a = input('Press y or action(1(up),2(down),3(left),4(right)):')
                         if a=='y':
                             break
-                        elif a in [1, 2, 3, 4]:
+                        elif a in ['1', '2', '3', '4']:
                             real_action = int(a)
+                            break
                 next_observe, reward, done, info = env.step(real_action)
                 next_state = preprocess(next_observe).reshape((1, RESIZE, RESIZE))
                 next_state = np.float32(next_state / 255.)
@@ -385,7 +388,7 @@ class Agent(threading.Thread):
             lambda_pred[t] = R_lambda
 
         adv_actor = reward_pred - values[:-1]
-        adv_critic = lambda_pred - values[:-1]
+        adv_critic = lambda_pred
 
         actor_loss = self.optimizer[0]([states[:-1], self.actions, adv_actor])
         critic_loss = self.optimizer[1]([states[:-1], adv_critic])

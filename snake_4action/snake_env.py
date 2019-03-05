@@ -1,20 +1,25 @@
 '''
 Author: Sunghoon Hong
 Title: snake_env.py
-Version: 5.0.0
+Version: 4.0.2
 Description: Snake game Environment
 Fix:
-    (5.0.0)
-    3 action (stay / right/ left)
-    normal reward = 0
-    new body replace
-    not overlap goal generation
+    (4.0.0)
+    PIXEL_SIZE = 20
+    Goal Reward = snake.len + 1
+    (4.0.1)
+    Goal Reward = +1
+    (4.0.2)
+    Goal Reward = snake.len
+    (4.0.3)
+    Normal Reward = -0.001
+    (4.0.4)
+    Normal Reward = 0
 '''
 
 import os
 import time
 import random
-import numpy as np
 import pygame as pg
 import gym
 
@@ -25,10 +30,6 @@ WINDOW_HEIGHT = 400
 
 GRID_LEN = 20
 GRID_SIZE = (GRID_LEN, GRID_LEN)
-
-GRID_WIDTH = WINDOW_WIDTH // GRID_LEN
-GRID_HEIGHT = WINDOW_HEIGHT // GRID_LEN
-
 # time
 FPS = 20  # This variable will define how many frames we update per second.
 DELAY = 0.1
@@ -41,10 +42,11 @@ GREEN = (0, 255, 0)
 BG_COLOR = BLACK
 
 # action
-STAY = 0
-LEFT = 1
-RIGHT = 2
-ACTION = ['STAY', 'LEFT', 'RIGHT']
+UP = 1
+DOWN = 2
+LEFT = 3
+RIGHT = 4
+ACTION = ['UP', 'DOWN', 'LEFT', 'RIGHT']
 
 class Head(pg.sprite.Sprite):
     
@@ -54,7 +56,7 @@ class Head(pg.sprite.Sprite):
             init_direction=None):
         pg.sprite.Sprite.__init__(self)
         self.speed = GRID_LEN
-        self.direction = None
+        self.direction = init_direction
         self.rect = pg.Rect((0,0), GRID_SIZE)
         self.image = pg.Surface(GRID_SIZE)
         self.image.fill(GREEN)
@@ -77,22 +79,25 @@ class Head(pg.sprite.Sprite):
 
     def move(self):
         self.trace = self.rect
-        if self.direction is not None:
-            self.rect = self.rect.move(self.direction * self.speed)
+        if self.direction == UP:
+            self.rect = self.rect.move(0, -self.speed)
+        elif self.direction == DOWN:
+            self.rect = self.rect.move(0, self.speed)
+        elif self.direction == LEFT:
+            self.rect = self.rect.move(-self.speed, 0)
+        elif self.direction == RIGHT:
+            self.rect = self.rect.move(self.speed, 0)
 
     def set_direction(self, dir):
-        if self.direction is None:
-            if dir == STAY:
-                self.direction = np.array([0, -1])
-            elif dir == LEFT:
-                self.direction = np.array([-1, 0])
-            elif dir == RIGHT:
-                self.direction = np.array([1, 0])
-        else:                
-            if dir == LEFT:
-                self.direction = np.array([self.direction[1], -self.direction[0]])
-            elif dir == RIGHT:
-                self.direction = np.array([-self.direction[1], self.direction[0]])
+        if ((self.direction==RIGHT and dir==LEFT)
+            or
+            (self.direction==LEFT and dir==RIGHT)
+            or
+            (self.direction==UP and dir == DOWN)
+            or
+            (self.direction==DOWN and dir==UP)):
+            return
+        self.direction = dir
             
     def chain(self, tail):
         self.tail = tail
@@ -106,7 +111,7 @@ class Body(pg.sprite.Sprite):
         self.head = head
         self.tail = None
         self.trace = None
-        self.rect = pg.Rect(head.trace.topleft, GRID_SIZE)
+        self.rect = pg.Rect(head.rect.topleft, GRID_SIZE)
         self.image = pg.Surface(GRID_SIZE)
         self.image.fill(GREEN)
 
@@ -205,13 +210,13 @@ class Game:
     def create_goal(self):
         if not self.goals:
             goal = Goal()
-            avail = [(i*GRID_LEN, j*GRID_LEN) for i in range(GRID_WIDTH) for j in range(GRID_HEIGHT)]
-            exists = []
-            exists.append(self.snake.head.rect.topleft)
-            for body in self.snake.bodys.sprites():
-                exists.append(body.rect.topleft)
-            avail = list(set(avail) - set(exists))
-            goal.rect.topleft = random.choice(avail)
+            while True:
+                goal.rect.topleft = (
+                    random.randrange(0, WINDOW_WIDTH-GRID_LEN, GRID_LEN),
+                    random.randrange(0, WINDOW_HEIGHT-GRID_LEN, GRID_LEN)
+                )
+                if goal.rect.topleft != self.snake.head.rect.topleft:
+                    break
             self.goals.add(goal)
         
     def collision(self):
@@ -239,9 +244,8 @@ class Game:
         return:
             info
         '''
-        if self.key is not None:
+        if self.key:
             self.snake.set_direction(self.key)
-            self.key = None
         self.snake.update()
         info = self.collision()
         self.create_goal()
@@ -268,7 +272,7 @@ class Game:
 class Env:
     def __init__(self):
         pg.init()
-        self.action_size = 3
+        self.action_size = 4
         self.game = Game()
 
     def reset(self):
@@ -325,7 +329,9 @@ if __name__ == '__main__':
                 quit()
             elif evt.type == pg.KEYDOWN:
                 if evt.key == pg.K_UP:
-                    game.keydown(STAY)
+                    game.keydown(UP)
+                elif evt.key == pg.K_DOWN:
+                    game.keydown(DOWN)
                 elif evt.key == pg.K_LEFT:
                     game.keydown(LEFT)
                 elif evt.key == pg.K_RIGHT:

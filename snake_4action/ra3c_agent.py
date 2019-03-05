@@ -5,7 +5,7 @@ Version: 0.2.0
 Description: RA3C Agent
 Detail:
     Sequence size = 4
-    Action size = 3
+    Action size = 4
     RESIZE = 84
     Loss function of Critic = Huber loss
     Apply TD-lambda
@@ -46,21 +46,19 @@ if os.path.exists('ra3c_output.csv'):
 parser = argparse.ArgumentParser()
 parser.add_argument('--save_rate', type=int, default=300)
 parser.add_argument('--threads', type=int, default=32)
-parser.add_argument('--tmax', type=int, default=40)
+parser.add_argument('--tmax', type=int, default=20)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--entropy', type=float, default=0.1)
-parser.add_argument('--lambd', type=float, default=1)
-parser.add_argument('--seqsize', type=int, default=4)
+parser.add_argument('--lambd', type=float, default=0.7)
+parser.add_argument('--seqsize', type=int, default=2)
 parser.add_argument('--gamma', type=float, default=0.99)
 parser.add_argument('--reward', type=str, default='default')
 
 args = parser.parse_args()
 
-np.set_printoptions(precision=4, suppress=True)
-
 SAVE_STAT_TIME_RATE = args.save_rate #sec
 THREAD_NUM = args.threads
-RESIZE = 84
+RESIZE = 80
 TRAIN = True
 # TRAIN = False
 LOAD_MODEL = True
@@ -94,8 +92,8 @@ class A3CAgent:
         self.threads = THREAD_NUM
         self.lambd = LAMBDA
 
-        self.state_size = (self.seq_size, RESIZE, RESIZE, 1)
-        self.action_size = 3
+        self.state_size = (self.seq_size, RESIZE, RESIZE)
+        self.action_size = 4
 
         self.actor, self.critic = self.build_model()
         self.optimizer = [self.actor_optimizer(), self.critic_optimizer()]
@@ -138,16 +136,21 @@ class A3CAgent:
                 print('%s: No Episodes...' % (dt.now().strftime('%Y-%m-%d %H:%M:%S')))
 
     def build_model(self):
+        state_size = list(self.state_size)
+        state_size.append(1)
         input = Input(shape=self.state_size)
-        conv = TimeDistributed(Conv2D(64, (8, 8), strides=(4, 4), padding='same', activation='elu', kernel_initializer='he_normal'))(input)
+        reshape = Reshape(state_size)(input)
+
+        conv = TimeDistributed(Conv2D(16, (8, 8), strides=(4, 4), padding='same', activation='elu', kernel_initializer='he_normal'))(reshape)
         conv = TimeDistributed(Conv2D(32, (4, 4), strides=(2, 2), activation='elu', kernel_initializer='he_normal'))(conv)
-        conv = TimeDistributed(Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal'))(conv)
-        conv = TimeDistributed(Conv2D(8, (1, 1), activation='elu', kernel_initializer='he_normal'))(conv)
+        conv = TimeDistributed(Conv2D(32, (2, 2), activation='elu', kernel_initializer='he_normal'))(conv)
+        conv = TimeDistributed(Conv2D(32, (1, 1), activation='elu', kernel_initializer='he_normal'))(conv)
         conv = TimeDistributed(Flatten())(conv)
         batch_norm = BatchNormalization()(conv)
-        gru = GRU(256, activation='tanh', kernel_initializer='he_normal')(batch_norm)
-        policy = Dense(self.action_size, activation='softmax', kernel_initializer='he_normal')(gru)
-        value = Dense(1, activation='linear', kernel_initializer='he_normal')(gru)
+        gru = GRU(512, activation='tanh', kernel_initializer='he_normal')(batch_norm)
+        fc = Dense(512, activation='elu', kernel_initializer='he_normal')(gru)
+        policy = Dense(self.action_size, activation='softmax', kernel_initializer='he_normal')(fc)
+        value = Dense(1, activation='linear', kernel_initializer='he_normal')(fc)
 
         actor = Model(inputs=input, outputs=policy)
         critic = Model(inputs=input, outputs=value)
@@ -176,8 +179,8 @@ class A3CAgent:
 
         loss = cross_entropy + ENT_WEIGHT * entropy
 
-        optimizer = Adam(lr=self.actor_lr)
-        updates = optimizer.get_updates(self.actor.trainable_weights, [], loss)
+        optimizer = Adam(lr=self.actor_lr, epsilon=0.01)
+        updates = optimizer.get_updates(self.actor.trainable_weights, [],loss)
         train = K.function([self.actor.input, action, advantages],
                            [loss], updates=updates)
         return train
@@ -193,7 +196,7 @@ class A3CAgent:
         linear = error - quadratic
         loss = K.mean(0.5 * K.square(quadratic) + linear)
 
-        optimizer = Adam(lr=self.critic_lr)
+        optimizer = Adam(lr=self.critic_lr, epsilon=0.01)
         updates = optimizer.get_updates(self.critic.trainable_weights, [], loss)
         train = K.function([self.critic.input, discounted_prediction],
                            [loss], updates=updates)
@@ -225,7 +228,7 @@ class A3CAgent:
             step = 0
             done = False
             observe, _, _, _ = env.reset()
-            state = preprocess(observe).reshape((1, RESIZE, RESIZE, 1))
+            state = preprocess(observe).reshape((1, RESIZE, RESIZE))
             state = np.float32(state / 255.)
             history = np.stack([state] * self.seq_size, axis=1)
             while not done:
@@ -240,29 +243,23 @@ class A3CAgent:
                         Image.fromarray(snapshot*255.).show()
                 action, policy = self.get_action(history)
                 if improve == 'greedy':
-                    real_action = int(np.argmax(policy))
+                    real_action = int(np.argmax(policy)) + 1
                 elif improve == 'e-greedy':
-                    real_action = int(np.argmax(policy)) if np.random.uniform(low=0.0, high=1.0) > 0.1 else action 
+                    real_action = int(np.argmax(policy)) + 1 if np.random.uniform(low=0.0, high=1.0) > 0.1 else action + 1
                 else:
-                    real_action = action
+                    real_action = action + 1
                 value = self.critic.predict(history)
                 print(value, '\t', ACTION[action], '\t', ACTION[int(np.argmax(policy))], '\t', policy)
                 if debug:
                     while True:
-                        a = input('Press y or action(w(stay), a(left), d(right)):')
+                        a = input('Press y or action(1(up),2(down),3(left),4(right)):')
                         if a=='y':
                             break
-                        elif a=='w':
-                            real_action = 0
-                            break
-                        elif a=='a':
-                            real_action = 1
-                            break
-                        elif a=='d':
-                            real_action = 2
+                        elif a in ['1', '2', '3', '4']:
+                            real_action = int(a)
                             break
                 next_observe, reward, done, info = env.step(real_action)
-                next_state = preprocess(next_observe).reshape((1, RESIZE, RESIZE, 1))
+                next_state = preprocess(next_observe).reshape((1, RESIZE, RESIZE))
                 next_state = np.float32(next_state / 255.)
                 next_history = np.append(history[0][1:], next_state, axis=0)
                 next_history = np.float32([next_history])
@@ -317,7 +314,7 @@ class Agent(threading.Thread):
             done = False
             observe, _, _, _ = env.reset()
 
-            state = preprocess(observe).reshape((1, RESIZE, RESIZE, 1))
+            state = preprocess(observe).reshape((1, RESIZE, RESIZE))
             state = np.float32(state / 255.)
             history = np.stack([state] * self.seq_size, axis=1)
 
@@ -325,11 +322,11 @@ class Agent(threading.Thread):
                 step += 1
                 self.t += 1
                 action, policy = self.get_action(history)
-                real_action = action
+                real_action = action + 1
                 next_observe, reward, done, info = env.step(real_action)
                 if REWARD_CLIP == 'clip':
                     reward = np.clip(reward, -1.0, 1.0)
-                next_state = preprocess(next_observe).reshape((1, RESIZE, RESIZE, 1))
+                next_state = preprocess(next_observe).reshape((1, RESIZE, RESIZE))
                 next_state = np.float32(next_state / 255.)
                 next_history = np.append(history[0][1:], next_state, axis=0)
                 next_history = np.float32([next_history])
@@ -371,7 +368,7 @@ class Agent(threading.Thread):
                     step = 0
 
     def train_model(self, next_history, done):
-        states = np.zeros((len(self.states) + 1, self.seq_size, RESIZE, RESIZE, 1))
+        states = np.zeros((len(self.states) + 1, self.seq_size, RESIZE, RESIZE))
         for i in range(len(self.states)):
             states[i] = self.states[i]
         states[len(self.states)] = next_history
@@ -396,7 +393,7 @@ class Agent(threading.Thread):
             lambda_pred[t] = R_lambda
 
         adv_actor = reward_pred - values[:-1]
-        adv_critic = lambda_pred
+        adv_critic = lambda_pred - values[:-1]
 
         critic_loss = self.optimizer[1]([states[:-1], adv_critic])
         actor_loss = self.optimizer[0]([states[:-1], self.actions, adv_actor])
