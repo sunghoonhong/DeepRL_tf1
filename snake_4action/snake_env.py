@@ -111,7 +111,7 @@ class Body(pg.sprite.Sprite):
         self.head = head
         self.tail = None
         self.trace = None
-        self.rect = pg.Rect(head.rect.topleft, GRID_SIZE)
+        self.rect = pg.Rect(head.trace.topleft, GRID_SIZE)
         self.image = pg.Surface(GRID_SIZE)
         self.image.fill(GREEN)
 
@@ -210,13 +210,13 @@ class Game:
     def create_goal(self):
         if not self.goals:
             goal = Goal()
-            while True:
-                goal.rect.topleft = (
-                    random.randrange(0, WINDOW_WIDTH-GRID_LEN, GRID_LEN),
-                    random.randrange(0, WINDOW_HEIGHT-GRID_LEN, GRID_LEN)
-                )
-                if goal.rect.topleft != self.snake.head.rect.topleft:
-                    break
+            avail = [(i*GRID_LEN, j*GRID_LEN) for i in range(GRID_WIDTH) for j in range(GRID_HEIGHT)]
+            exists = []
+            exists.append(self.snake.head.rect.topleft)
+            for body in self.snake.bodys.sprites():
+                exists.append(body.rect.topleft)
+            avail = list(set(avail) - set(exists))
+            goal.rect.topleft = random.choice(avail)
             self.goals.add(goal)
         
     def collision(self):

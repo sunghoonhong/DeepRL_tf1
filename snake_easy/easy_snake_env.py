@@ -1,7 +1,7 @@
 '''
 Author: Sunghoon Hong
 Title: easy_snake_env.py
-Version: 0.0.1
+Version: 0.0.2
 Description: Easy Snake game Environment
 Fix:
     Fixed Reward
@@ -101,7 +101,7 @@ class Body(pg.sprite.Sprite):
         self.head = head
         self.tail = None
         self.trace = None
-        self.rect = pg.Rect(head.rect.topleft, GRID_SIZE)
+        self.rect = pg.Rect(head.trace.topleft, GRID_SIZE)
         self.image = pg.Surface(GRID_SIZE)
         self.image.fill(GREEN)
 
