@@ -30,6 +30,6 @@ I've been trying to get rid of distance from reward scheme.
 
 2. Only 3 action  
 Human usually plays 'snake' with 4 arrow keys.  
-So, there are 4 actions that key which represents reverse direction makes no difference.  
+So, there are 4 actions including key which represents reverse direction makes no difference.  
 (Actually, there are only 3 actions that affect snake's move.)  
 Although action space of which size is 3 is more easier, I want to make action space of which size is 4, and then figure out how is gonna policy for reverse action.  
