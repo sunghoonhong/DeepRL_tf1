@@ -9,5 +9,6 @@
 
 - DQN
 - A3C
+- PPO
 - Recurrent A3C
 - DDPG
