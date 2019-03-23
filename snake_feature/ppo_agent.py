@@ -25,11 +25,12 @@ class PPOAgent:
     def __init__(self, state_size, action_size, seq_size,
                 gamma, lambd, horizon, entropy, actor_lr, critic_lr, thread_num, 
                 reward_clip, clip, batch_size, epoch,
-                verbose, load_model, render, save_rate, debug):
+                verbose, load_model, render, save_rate, debug, timeout):
         # self.lock = threading.Lock()
         self.render = render
         self.save_rate = save_rate
         self.debug = debug
+        self.timeout = timeout
 
         # hyperparameter
         self.seq_size = seq_size
@@ -49,9 +50,6 @@ class PPOAgent:
         self.action_size = action_size
 
         self.actor, self.critic = self.build_model()
-        # self.old_actor = self.build_model(actor_only=True)
-        # self.update_old_actor()
-
         self.actor_update = self.actor_optimizer()
         self.critic_update = self.critic_optimizer()
         
@@ -65,7 +63,7 @@ class PPOAgent:
         if load_model:
             self.load_model('./save_model/ppo')
 
-    def build_model(self, actor_only=False):
+    def build_model(self):
         state = Input(shape=self.state_size)
         state_process = Dense(100, activation='elu')(state)
         state_process = BatchNormalization()(state_process)
@@ -75,19 +73,13 @@ class PPOAgent:
         value = Dense(1, activation='linear', kernel_initializer=tf.random_uniform_initializer(minval=-3e-3, maxval=3e-3))(state_process)
 
         actor = Model(inputs=state, outputs=policy, name='Actor')
-        actor._make_predict_function()
-        
-        if actor_only:
-            return actor
-        
         critic = Model(inputs=state, outputs=value, name='Critic')
+
+        actor._make_predict_function()
         critic._make_predict_function()
 
         return actor, critic
 
-    # def update_old_actor(self):
-        # self.old_actor.set_weights(self.actor.get_weights())
-    
     def actor_optimizer(self):
         action = K.placeholder(shape=[None, self.action_size])
         old_pi = K.placeholder(shape=[None, ])
@@ -136,15 +128,10 @@ class PPOAgent:
         global episode
         highscore = 0
 
-        if episode > 100:
-            if os.path.exists('ppo_output.csv'):
-                with open('ppo_output.csv', 'r') as f:
-                    read = csv.reader(f)
-                    for i, line in enumerate(reversed(list(read))):
-                        if i == 100:
-                            highscore /= 100.
-                            break
-                        highscore += float(line[3])
+        if os.path.exists('ppo_highscore.csv'):
+            with open('ppo_highscore.csv', 'r') as f:
+                read = csv.reader(f)
+                highscore = float(next(reversed(list(read)))[1])
         print('Highscore: %.3f' % highscore)
 
         env = Env()
@@ -162,9 +149,10 @@ class PPOAgent:
             step = 0
             reward_sum = 0
             pmax = 0
+            timeout = 0
             observe, _, _, _ = env.reset()
             state = observe.reshape(self.state_shape) / 20.
-            while not done:
+            while not done and timeout < self.timeout:
                 if self.render:
                     env.render()
                 action, policy = self.get_action(state)
@@ -181,14 +169,17 @@ class PPOAgent:
                 
                 self.append_sample(state, action, reward, policy[action])
 
+                timeout = 0 if info == 'goal' else timeout + 1
                 step += 1
                 t += 1
                 pmax += np.amax(policy)
                 reward_sum += reward
 
                 state = next_state
-            mask = False if done and info=='timeout' else done
-            self.get_gae(next_state, mask)
+
+            if not done:
+                info = 'timeout'
+            self.get_gae(next_state, done)
             self.t = t
             episode += 1
 
@@ -207,7 +198,7 @@ class PPOAgent:
                 self.t = 0
                 # actor_loss += a_loss
                 # critic_loss += c_loss
-                if len(self.stats) >= 100:
+                if len(self.stats) >= self.save_rate:
                     with open('ppo_output.csv', 'a', encoding='utf-8', newline='') as f:
                         wr = csv.writer(f)
                         for row in self.stats:
@@ -216,6 +207,9 @@ class PPOAgent:
                     mean = np.mean(np.float32(np.split(self.stats, [-1], axis=1)[0]), axis=0)
                     if mean[3] > highscore:
                         highscore = mean[3]
+                        with open('ppo_highscore.csv', 'a', encoding='utf-8', newline='') as f:
+                            wr = csv.writer(f)
+                            wr.writerow([episode, highscore, dt.now().strftime('%Y-%m-%d %H:%M:%S')])
                         self.save_model('./save_model/ppo_high')
                     print('%s: %s Episodes Trained! Reward:%.3f Score:%.3f Step:%.3f Pmax:%.3f' 
                             % (dt.now().strftime('%Y-%m-%d %H:%M:%S'), 
@@ -350,7 +344,7 @@ if __name__ == "__main__":
         print('Last Episode:', episode)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--save_rate',  type=int,   default=60,     help='Log and save model per save_rate (sec)')
+    parser.add_argument('--save_rate',  type=int,   default=100,     help='Log and save model per save_rate (sec)')
     parser.add_argument('--threads',    type=int,   default=16,     help='The number of threads')
     parser.add_argument('--lr',         type=float, default=1e-4,   help='Learning rate of critic. lr of actor will be divided by 10')
     parser.add_argument('--entropy',    type=float, default=1e-3,   help='Weight of entropy of actor loss (beta)')
@@ -359,8 +353,9 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int,   default=16,     help='Mini-batch size')
     parser.add_argument('--horizon',    type=int,   default=256,    help='Time horizon')
     parser.add_argument('--seqsize',    type=int,   default=1,      help='Length of sequence')
-    parser.add_argument('--epoch',      type=int,   default=3,     help='Update epochs')
+    parser.add_argument('--epoch',      type=int,   default=3,      help='Update epochs')
     parser.add_argument('--clip',       type=float, default=0.2,    help='Clip ratio')
+    parser.add_argument('--timeout',    type=int,   default=400,    help='After this step, timeout')
     parser.add_argument('--reward_clip',action='store_true',        help='Reward will be clipped in [-1, 1]')
     parser.add_argument('--render',     action='store_true',        help='First agent render')
     parser.add_argument('--load_model', action='store_true',        help='Load model in ./save_model/')
@@ -388,6 +383,7 @@ if __name__ == "__main__":
         render=args.render,
         save_rate=args.save_rate,
         reward_clip=args.reward_clip,
-        debug=args.debug
+        debug=args.debug,
+        timeout=args.timeout
     )
     global_agent.train()

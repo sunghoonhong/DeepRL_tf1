@@ -5,7 +5,7 @@ Version: 0.0.1
 Description: Snake game Environment
 Fix:
     3 action (stay / right/ left)
-    penalty 4 / (W * H) == 0.01 each step
+    Delete decaying snake's life. Instead, agent will handle it.
 '''
 
 import os
@@ -154,7 +154,7 @@ class Snake():
     def update(self):
         self.head.update()
         self.bodys.update()
-        self.life -= 4 / float(GRID_WIDTH * GRID_HEIGHT)
+        # self.life -= 4 / float(GRID_WIDTH * GRID_HEIGHT)
 
     def draw(self, screen):
         self.bodys.draw(screen)
@@ -290,7 +290,7 @@ class Game:
             self.snake.life -= 1
             info = 'boundary'
         elif pg.sprite.spritecollide(self.snake.head, self.goals, True):
-            self.snake.life = 1
+            # self.snake.life = 1
             self.score += 1
             info = 'goal'
             self.snake.push_back()
@@ -365,8 +365,8 @@ class Env:
         info = self.game.update()
         done = (self.game.snake.life <= 0)
         reward = REWARD[info]
-        if done and info in ['closer', 'farther']:
-            info = 'timeout'
+        # if done and info in ['closer', 'farther']:
+            # info = 'timeout'
             
         self.game.draw()
         # observe = pg.surfarray.array3d(self.game.screen)
