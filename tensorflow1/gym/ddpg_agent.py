@@ -33,8 +33,8 @@ agent_name = 'ddpg'
 class DDPGAgent(object):
     
     def __init__(self, state_size, action_size, actor_lr, critic_lr, tau,
-                gamma, lambd, batch_size, memory_size, 
-                epsilon, epsilon_end, decay_step, load_model):
+                gamma, lambd, batch_size, memory_size,
+                epsilon, epsilon_end, decay_step, load_model, game):
         self.state_size = state_size
         self.action_size = action_size
         self.actor_lr = actor_lr
@@ -49,6 +49,7 @@ class DDPGAgent(object):
         self.decay_step = decay_step
         self.epsilon_decay = (epsilon - epsilon_end) / decay_step
 
+        self.game = game
         self.sess = tf.Session()
         K.set_session(self.sess)
 
@@ -59,7 +60,7 @@ class DDPGAgent(object):
         self.sess.run(tf.global_variables_initializer())
 
         if load_model:
-            self.load_model('./save_model/'+ agent_name)
+            self.load_model('./save_model/%s_%s' % (agent_name, game))
         
         self.target_actor.set_weights(self.actor.get_weights())
         self.target_critic.set_weights(self.critic.get_weights())
@@ -194,16 +195,16 @@ if __name__ == '__main__':
     parser.add_argument('--play',       action='store_true')
     parser.add_argument('--actor_lr',   type=float, default=1e-3)
     parser.add_argument('--critic_lr',  type=float, default=2.5e-3)
-    parser.add_argument('--tau',        type=float, default=1e-2)
+    parser.add_argument('--tau',        type=float, default=0.1)
     parser.add_argument('--gamma',      type=float, default=0.99)
     parser.add_argument('--lambd',      type=float, default=0.90)
-    parser.add_argument('--batch_size', type=int,   default=16)
+    parser.add_argument('--batch_size', type=int,   default=512)
     parser.add_argument('--memory_size',type=int,   default=100000)
-    parser.add_argument('--train_start',type=int,   default=10000)
-    parser.add_argument('--train_rate', type=int,   default=50)
+    parser.add_argument('--train_start',type=int,   default=5000)
+    parser.add_argument('--train_rate', type=int,   default=100)
     parser.add_argument('--epsilon',    type=float, default=1.5)
-    parser.add_argument('--epsilon_end',type=float, default=0.1)
-    parser.add_argument('--decay_step', type=int,   default=100000)
+    parser.add_argument('--epsilon_end',type=float, default=0.01)
+    parser.add_argument('--decay_step', type=int,   default=200000)
     parser.add_argument('--game',       type=str,   default='MountainCarContinuous-v0')
 
     args = parser.parse_args()
@@ -214,7 +215,6 @@ if __name__ == '__main__':
         os.makedirs('save_stat')
     if not os.path.exists('save_model'):
         os.makedirs('save_model')
-
 
     env = gym.make(args.game)
     # Make RL agent
@@ -235,7 +235,8 @@ if __name__ == '__main__':
         epsilon=args.epsilon,
         epsilon_end=args.epsilon_end,
         decay_step=args.decay_step,
-        load_model=args.load_model
+        load_model=args.load_model,
+        game=args.game
     )
 
     # Train
@@ -251,7 +252,7 @@ if __name__ == '__main__':
             observe = env.reset()
             state = observe.reshape(1, -1)
             while not done:
-                if args.render: #and episode % 5 == 0:
+                if args.render:
                     env.render()
                 timestep += 1
                 action = agent.actor.predict(state)[0]
@@ -277,12 +278,13 @@ if __name__ == '__main__':
             # done
             avgAct /= timestep
             avgQ /= timestep
+
             print('Ep %d: Step %d Score %.2f AvgQ:%.3f AvgAct:%.3f' % (episode, timestep, score, avgQ, avgAct))
 
             episode += 1
     else:
-        if os.path.exists('save_stat/'+ agent_name + '_stat.csv'):
-            with open('save_stat/'+ agent_name + '_stat.csv', 'r') as f:
+        if os.path.exists('save_stat/%s_%s.csv' % (agent_name, args.game)):
+            with open('save_stat/%s_%s.csv' % (agent_name, args.game), 'r') as f:
                 read = csv.reader(f)
                 episode = int(float(next(reversed(list(read)))[0]))
                 print('Last episode:', episode)
@@ -298,7 +300,7 @@ if __name__ == '__main__':
             observe = env.reset()
             state = observe.reshape(1, -1)
             while not done:
-                if args.render: #and episode % 5 == 0:
+                if args.render and episode % 5 == 0:
                     env.render()
                 if len(agent.memory) >= args.train_start and timestep % args.train_rate == 0:
                     a_loss, c_loss = agent.train_model()
@@ -329,16 +331,16 @@ if __name__ == '__main__':
                     agent.epsilon -= agent.epsilon_decay
 
             # done
-            # if args.verbose or episode % 10 == 0:
-            print('Ep %d: Step %d Score %.2f' % (episode, timestep, score))
-            
             actor_loss /= timestep
             critic_loss /= timestep
             avgQ /= timestep
             avgAct /= timestep
+
+            print('Ep %d: Step %d Score %.2f AvgQ:%.3f AvgAct:%.3f' % (episode, timestep, score, avgQ, avgAct))
+            
             # log stats
-            with open('save_stat/'+ agent_name + '_stat.csv', 'a', encoding='utf-8', newline='') as f:
+            with open('save_stat/%s_%s.csv' % (agent_name, args.game), 'a', encoding='utf-8', newline='') as f:
                 wr = csv.writer(f)
                 wr.writerow(['%.4f' % s if type(s) is float else s for s in [episode, timestep, score, actor_loss, critic_loss, avgQ, avgAct]])
-            agent.save_model('./save_model/'+ agent_name)
+            agent.save_model('./save_model/%s_%s' % (agent_name, args.game))
             episode += 1    
