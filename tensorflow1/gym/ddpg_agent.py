@@ -1,6 +1,6 @@
 '''
 Author: Sunghoon Hong
-Title: DDPGAgent.py
+Title: ddpg_agent.py
 Description:
     Deep Deterministic Policy Gradient Agent for gym
 Detail:
@@ -192,18 +192,18 @@ if __name__ == '__main__':
     parser.add_argument('--load_model', action='store_true')
     parser.add_argument('--render',     action='store_true')
     parser.add_argument('--play',       action='store_true')
-    parser.add_argument('--actor_lr',   type=float, default=1e-4)
-    parser.add_argument('--critic_lr',  type=float, default=5e-4)
+    parser.add_argument('--actor_lr',   type=float, default=1e-3)
+    parser.add_argument('--critic_lr',  type=float, default=2.5e-3)
     parser.add_argument('--tau',        type=float, default=1e-2)
     parser.add_argument('--gamma',      type=float, default=0.99)
     parser.add_argument('--lambd',      type=float, default=0.90)
     parser.add_argument('--batch_size', type=int,   default=16)
     parser.add_argument('--memory_size',type=int,   default=100000)
-    parser.add_argument('--train_start',type=int,   default=1000)
-    parser.add_argument('--train_rate', type=int,   default=100)
-    parser.add_argument('--epsilon',    type=float, default=0.5)
+    parser.add_argument('--train_start',type=int,   default=10000)
+    parser.add_argument('--train_rate', type=int,   default=50)
+    parser.add_argument('--epsilon',    type=float, default=1.5)
     parser.add_argument('--epsilon_end',type=float, default=0.1)
-    parser.add_argument('--decay_step', type=int,   default=1e5)
+    parser.add_argument('--decay_step', type=int,   default=100000)
     parser.add_argument('--game',       type=str,   default='MountainCarContinuous-v0')
 
     args = parser.parse_args()
@@ -238,22 +238,9 @@ if __name__ == '__main__':
         load_model=args.load_model
     )
 
-    # # Train
+    # Train
     episode = 0
-    # highscoreY = 0.
-    # if os.path.exists('save_stat/'+ agent_name + '_stat.csv'):
-    #     with open('save_stat/'+ agent_name + '_stat.csv', 'r') as f:
-    #         read = csv.reader(f)
-    #         episode = int(float(next(reversed(list(read)))[0]))
-    #         print('Last episode:', episode)
-    #         episode += 1
-    # if os.path.exists('save_stat/'+ agent_name + '_highscore.csv'):
-    #     with open('save_stat/'+ agent_name + '_highscore.csv', 'r') as f:
-    #         read = csv.reader(f)
-    #         highscoreY = float(next(reversed(list(read)))[0])
-    #         print('Best Y:', highscoreY)
-    # stats = []
-
+    
     if args.play:
         while True:
             done = False
@@ -293,7 +280,14 @@ if __name__ == '__main__':
             print('Ep %d: Step %d Score %.2f AvgQ:%.3f AvgAct:%.3f' % (episode, timestep, score, avgQ, avgAct))
 
             episode += 1
-    else:        
+    else:
+        if os.path.exists('save_stat/'+ agent_name + '_stat.csv'):
+            with open('save_stat/'+ agent_name + '_stat.csv', 'r') as f:
+                read = csv.reader(f)
+                episode = int(float(next(reversed(list(read)))[0]))
+                print('Last episode:', episode)
+                episode += 1
+        stats = []
         while True:
             done = False
 
