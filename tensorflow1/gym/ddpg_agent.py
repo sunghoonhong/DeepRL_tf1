@@ -272,9 +272,6 @@ if __name__ == '__main__':
 
                 state = next_state
 
-                if agent.epsilon > agent.epsilon_end:
-                    agent.epsilon -= agent.epsilon_decay
-
             # done
             avgAct /= timestep
             avgQ /= timestep
