@@ -1,328 +1,350 @@
 '''
-DDPG with ER
+Author: Sunghoon Hong
+Title: DDPGAgent.py
+Description:
+    Deep Deterministic Policy Gradient Agent for gym
+Detail:
 
 '''
+
+
 import os
 import csv
+import time
 import random
 import argparse
+from copy import deepcopy
 from collections import deque
+from datetime import datetime as dt
 import numpy as np
-import gym
-from keras import backend as K
-from keras.layers import Dense, Conv2D, Input, Reshape, Concatenate, BatchNormalization, Add
+import tensorflow as tf
+import keras.backend as K
+from keras.layers import TimeDistributed, BatchNormalization, Flatten, Add, Lambda, Concatenate
+from keras.layers import Dense, Input, ELU, Activation
 from keras.optimizers import Adam
 from keras.models import Model
-from sklearn.preprocessing import StandardScaler
-from sklearn.exceptions import DataConversionWarning
-import warnings
-warnings.filterwarnings(action='ignore', category=DataConversionWarning)
 
-import tensorflow as tf
+import gym
 
-VERBOSE = False
-# VERBOSE = True
-RENDER = False
-# RENDER = True
-# TRAIN = False
-TRAIN = True
+np.set_printoptions(suppress=True, precision=4)
+agent_name = 'ddpg'
 
-global game
 
-class DDPGAgent:
-    def __init__(self, state_space, action_space, render=False):
-        self.state_size = state_space.shape[0]
-        self.action_size = action_space.shape[0]
-        self.action_low = action_space.low
-        self.action_high = action_space.high
-        
-        # Hyper-Parameter
-        self.tau = 0.1
-        self.actor_lr = 1e-4
-        self.critic_lr = 1e-4
-        self.gamma = 0.99
-        self.memory_size = 20000
-        # self.train_start = 1
-        # self.update_target_rate = 10
-        self.batch_size = 50
+class DDPGAgent(object):
+    
+    def __init__(self, state_size, action_size, actor_lr, critic_lr, tau,
+                gamma, lambd, batch_size, memory_size, 
+                epsilon, epsilon_end, decay_step, load_model):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.actor_lr = actor_lr
+        self.critic_lr = critic_lr
+        self.tau = tau
+        self.gamma = gamma
+        self.lambd = lambd
+        self.batch_size = batch_size
+        self.memory_size = memory_size
+        self.epsilon = epsilon
+        self.epsilon_end = epsilon_end
+        self.decay_step = decay_step
+        self.epsilon_decay = (epsilon - epsilon_end) / decay_step
 
-        # TF Session
         self.sess = tf.Session()
         K.set_session(self.sess)
 
-        # Model
         self.actor, self.critic = self.build_model()
         self.target_actor, self.target_critic = self.build_model()
-        self.target_actor.set_weights(self.actor.get_weights())
-        self.target_critic.set_weights(self.critic.get_weights())
-        # self.get_action_grad = self.get_action_gradients()
-        self.actor_update = self.actor_optimizer()
-        self.critic_update = self.critic_optimizer()
-
+        self.actor_update = self.build_actor_optimizer()
+        self.critic_update = self.build_critic_optimizer()
         self.sess.run(tf.global_variables_initializer())
 
-        # Replay Memory
+        if load_model:
+            self.load_model('./save_model/'+ agent_name)
+        
+        self.target_actor.set_weights(self.actor.get_weights())
+        self.target_critic.set_weights(self.critic.get_weights())
+
         self.memory = deque(maxlen=self.memory_size)
 
     def build_model(self):
-        state = Input([self.state_size])
-        fc1 = Dense(100, activation='elu')(state)
-        # fc1 = BatchNormalization()(fc1)
-        # fc1 = Dense(100, activation='elu')(fc1)
-        action_output = Dense(self.action_size, activation='tanh')(fc1)
+        # shared network
+        state = Input(shape=[self.state_size])
+        state_process = Dense(32, kernel_initializer='he_normal', use_bias=False)(state)
+        state_process = BatchNormalization()(state_process)
+        state_process = Activation('elu')(state_process)
 
-        actor = Model(inputs=state, outputs=action_output)
+        # Actor
+        policy = Dense(64, kernel_initializer='he_normal', use_bias=False)(state_process)
+        policy = BatchNormalization()(policy)
+        policy = ELU()(policy)
+        policy = Dense(self.action_size, activation='tanh', kernel_initializer=tf.random_uniform_initializer(minval=-3e-3, maxval=3e-3))(policy)
+        actor = Model(inputs=state, outputs=policy)
+        
+        # Critic
+        action = Input(shape=[self.action_size])
+        action_process = Dense(32, kernel_initializer='he_normal', use_bias=False)(action)
+        action_process = BatchNormalization()(action_process)
+        action_process = ELU()(action_process)
+        state_action = Add()([state_process, action_process])
 
-        # state = Input([self.state_size], batch_shape=[self.batch_size, self.state_size])
-        action = Input([self.action_size])
-        action_process = Dense(100, activation='elu')(action)
-        # action_process = BatchNormalization()(action_process)
-        # state_process  = Dense(100, activation='elu')(state)
-        # state_process  = BatchNormalization()(state_process)
-        # state_process  = Dense(100, activation='elu')(state_process)
-        state_action = Add()([fc1, action_process])
-        fc2 = Dense(50, activation='elu')(state_action)
-        Q_output = Dense(1)(fc2)
-    
-        critic = Model(inputs=[state, action], outputs=Q_output)
-        # action_grad = tf.gradients(critic.output, action)
+        Qvalue = Dense(64, kernel_initializer='he_normal', use_bias=False)(state_action)
+        Qvalue = BatchNormalization()(Qvalue)
+        Qvalue = ELU()(Qvalue)
+        Qvalue = Dense(1, kernel_initializer=tf.random_uniform_initializer(minval=-3e-3, maxval=3e-3))(Qvalue)
+        critic = Model(inputs=[state, action], outputs=Qvalue)
 
         actor._make_predict_function()
         critic._make_predict_function()
         
-        if VERBOSE:
-            actor.summary()
-            critic.summary()
-
         return actor, critic
-    
-    def actor_optimizer(self):
-        action_grad = tf.gradients(self.critic.output, self.critic.input[1])
-        target = tf.math.negative(action_grad)
-        # target = tf.reshape(target, shape=target.shape[1:])
-        params_grad = tf.gradients(
-            self.actor.output, self.actor.trainable_weights, target)
-        grads = zip(params_grad, self.actor.trainable_weights)
-        optimizer = tf.train.AdamOptimizer(self.actor_lr)
-        updates = optimizer.apply_gradients(grads)
-        train = K.function([self.actor.input, self.critic.input[1]], [],
-                            updates=[updates])
+
+    def build_actor_optimizer(self):
+        pred_Q = self.critic.output
+        action_grad = tf.gradients(pred_Q, self.critic.input[1])
+        target = -action_grad[0]
+        loss = K.mean(target * self.actor.output)
+        optimizer = Adam(lr=self.actor_lr)
+        updates = optimizer.get_updates(self.actor.trainable_weights, [], loss)
+        train = K.function([self.actor.input, self.critic.input[1]], [loss],
+                            updates=updates)#[updates])
         return train
 
-    # def actor_update(self, states, actions):
-    #     self.sess.run(self.actor_optimize, feed_dict={
-    #         self.actor.input: states,
-    #         self.critic.input[1]: actions
-    #     })
-    # def actor_update(self, states, action_grad):
-    #     return self.sess.run(self.actor_optimize, feed_dict={
-    #         self.actor.input: states,
-    #         self.action_gradient: action_grad
-    #     })
-
-    # def get_action_gradients(self, states, actions):
-    #     return self.sess.run(self.action_grad, feed_dict={
-    #         self.actor.input: states,
-    #         self.critic.input[1]: actions
-    #     })[0]
-
-    def critic_optimizer(self):
+    def build_critic_optimizer(self):
         y = K.placeholder(shape=(None, ), dtype='float32')
         pred = self.critic.output
         
-        loss = K.mean(K.square(pred-y))
+        loss = 0.5 * K.mean(K.square(pred - y))
         # Huber Loss
-        # error = K.abs(y-pred)
+        # error = K.abs(y - pred)
         # quadratic = K.clip(error, 0.0, 1.0)
         # linear = error - quadratic
         # loss = K.mean(0.5 * K.square(quadratic) + linear)
 
         optimizer = Adam(lr=self.critic_lr)
         updates = optimizer.get_updates(self.critic.trainable_weights, [], loss)
-        # print(updates)
         train = K.function([self.critic.input[0], self.critic.input[1], y],
                             [loss], updates=updates)
         return train
 
-    def update_target_model(self):
-        # self.target_actor.set_weights(self.actor.get_weights())
-        # self.target_critic.set_weights(self.critic.get_weights())
-        copy_op = []
-        tau = self.tau
-        for main_var, target_var in zip(self.actor.trainable_weights, self.target_actor.trainable_weights):
-            copy_op.append(target_var.assign(tf.multiply(main_var.value(), tau) + tf.multiply(target_var.value(), 1 - tau)))
-        self.sess.run(copy_op)
-        copy_op = []
-        for main_var, target_var in zip(self.critic.trainable_weights, self.target_critic.trainable_weights):
-            copy_op.append(target_var.assign(tf.multiply(main_var.value(), tau) + tf.multiply(target_var.value(), 1 - tau)))
-        self.sess.run(copy_op)
-
-    def get_action(self, state, ep):
-        # if ep < 5:
-        #     action = np.random.normal(0.3, 1.5) + 0.5
-        #     action = np.clip(action, -1.0, 1.0)
-        #     return np.array([action])
-        # # if TRAIN:
-        # elif ep < 1000:
-        #     ep /= 100
-        #     c = 1 - ep/10
-        act = self.actor.predict(state)
-        # if ep < 5:
-        #     act += np.random.normal(0, 1)
-        act = np.clip(act, -1.0, 1.0)
-        return act
-
-    def train(self, ep):
+    def get_action(self, state):
+        policy = self.actor.predict(state)[0]
+        noise = [np.random.normal(scale=self.epsilon)] * self.action_size
+        noise = np.array(noise, dtype=np.float64)
+        action = policy + noise
+        return action, policy
+    
+    def train_model(self):
         batch = random.sample(self.memory, self.batch_size)
 
         states = np.zeros((self.batch_size, self.state_size))
-        actions = np.zeros((self.batch_size, 1))
+        actions = np.zeros((self.batch_size, self.action_size))
         rewards = np.zeros((self.batch_size, 1))
+        next_states = np.zeros((self.batch_size, self.state_size))
+        dones = np.zeros((self.batch_size, 1))
+
+        targets = np.zeros((self.batch_size, 1))
         
         for i, sample in enumerate(batch):
+            states[i] = sample[0]
+            actions[i] = sample[1]
+            rewards[i] = sample[2]
+            next_states[i] = sample[3]
+            dones[i] = sample[4]
+        
+        policy = self.actor.predict(states)
+        target_actions = self.target_actor.predict(next_states)
+        target_next_Qs = self.target_critic.predict([next_states, target_actions])
+        targets = rewards + self.gamma * (1 - dones) * target_next_Qs
 
-            states[i] = sample[0]   #shape = (1, 3)
-            actions[i] = sample[1]  #shape = (1, 1)
-            rewards[i] = sample[2]  #shape = (,)
+        actor_loss = self.actor_update([states, policy])
+        critic_loss = self.critic_update([states, actions, targets])
+        return actor_loss[0], critic_loss[0]
 
-
-        pred_actions = self.target_actor.predict(states)
-        self.actor_update([states, pred_actions])
-        self.critic_update([states, actions, rewards])
-        # action_grad = self.get_action_gradients(states, pred_action)
-
-    def append_sample(self, states, actions, rewards):
-        for i in range(len(states)):
-            self.memory.append((states[i], actions[i], rewards[i]))
+    def append_memory(self, state, action, reward, next_state, done):        
+        self.memory.append((state, action, reward, next_state, done))
+        
+    def load_model(self, name):
+        if os.path.exists(name + '_actor.h5'):
+            self.actor.load_weights(name + '_actor.h5')
+            print('Actor loaded')
+        if os.path.exists(name + '_critic.h5'):
+            self.critic.load_weights(name + '_critic.h5')
+            print('Critic loaded')
 
     def save_model(self, name):
-        self.actor.save_weights('save_model/' + name + '_actor.h5')
-        self.critic.save_weights('save_model/' + name + '_critic.h5')
-        print('Model Saved\n')
+        self.actor.save_weights(name + '_actor.h5')
+        self.critic.save_weights(name + '_critic.h5')
 
-    def load_model(self, name):
-        if os.path.exists('save_model/' + name + '_actor.h5'):
-            self.actor.load_weights('save_model/' + name + '_actor.h5')
-            print('Actor Loaded')
-        if os.path.exists('save_model/' + name + '_critic.h5'):
-            self.critic.load_weights('save_model/' + name + '_critic.h5')
-            print('Critic Loaded')
+    def update_target_model(self):
+        actor_weights = np.array(self.actor.get_weights())
+        target_actor_weights = np.array(self.target_actor.get_weights())
+        critic_weights = np.array(self.critic.get_weights())
+        target_critic_weights = np.array(self.target_critic.get_weights())
+        new_actor_weights = self.tau * actor_weights + (1 - self.tau) * target_actor_weights
+        new_critic_weights = self.tau * critic_weights + (1 - self.tau) * target_critic_weights
+        self.target_actor.set_weights(new_actor_weights)
+        self.target_critic.set_weights(new_critic_weights)
+
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tmax', type=int, default=1000)
-    parser.add_argument('--lambd', type=float, default=1.0)
-    parser.add_argument('--render', action='store_true')
-    parser.add_argument('--game', type=str)
+    parser.add_argument('--verbose',    action='store_true')
     parser.add_argument('--load_model', action='store_true')
-    args = parser.parse_args()
-    TMAX = args.tmax
-    LAMBDA = args.lambd
-    global game
-    game = args.game
+    parser.add_argument('--render',     action='store_true')
+    parser.add_argument('--play',       action='store_true')
+    parser.add_argument('--actor_lr',   type=float, default=1e-4)
+    parser.add_argument('--critic_lr',  type=float, default=5e-4)
+    parser.add_argument('--tau',        type=float, default=1e-2)
+    parser.add_argument('--gamma',      type=float, default=0.99)
+    parser.add_argument('--lambd',      type=float, default=0.90)
+    parser.add_argument('--batch_size', type=int,   default=16)
+    parser.add_argument('--memory_size',type=int,   default=100000)
+    parser.add_argument('--train_start',type=int,   default=1000)
+    parser.add_argument('--train_rate', type=int,   default=100)
+    parser.add_argument('--epsilon',    type=float, default=0.5)
+    parser.add_argument('--epsilon_end',type=float, default=0.1)
+    parser.add_argument('--decay_step', type=int,   default=1e5)
+    parser.add_argument('--game',       type=str,   default='MountainCarContinuous-v0')
 
-    env = gym.make(game)
-    agent = DDPGAgent(env.observation_space, env.action_space, args.render)
-    if args.load_model:
-        agent.load_model('ddpg')
-    # EPISODES = 500000
+    args = parser.parse_args()
+
+    if not os.path.exists('save_graph/'+ agent_name):
+        os.makedirs('save_graph/'+ agent_name)
+    if not os.path.exists('save_stat'):
+        os.makedirs('save_stat')
     if not os.path.exists('save_model'):
         os.makedirs('save_model')
-    e = 0
-    if os.path.exists('ddpg_output.csv'):
-        with open('ddpg_output.csv', 'r') as f:
-            read = csv.reader(f)
-            e = int(next(reversed(list(read)))[0])
-        print(e)
-    stats = []
-
-    
-    observation_examples = np.array([env.observation_space.sample() for x in range(10000)])
-    action_examples = np.array([env.action_space.sample() for x in range(10000)])
-    scaler_s = StandardScaler()
-    scaler_a = StandardScaler()
-    scaler_s.fit(observation_examples)
-    scaler_a.fit(action_examples)
-
-    # np.set_printoptions(precision=4, suppress=True)
-    while True:
-        done = False
-        step = 0
-        T = 0
-        score = 0
-        state = env.reset()
-        state = np.reshape(state, [1, agent.state_size])
-        state = list(scaler_s.transform(state)[0])
-        state = np.reshape(state, [1, agent.state_size])
-        state_list, action_list, reward_list = [], [], []
-
-        while not done:
-            if args.render:# and e > 20:
-                env.render()
-            if TRAIN:
-                if len(agent.memory) >= 3000:
-                    agent.train(e)
-
-            action = agent.get_action(state, e)
-            next_state, reward, done, _ = env.step(action * agent.action_high[0])
-            T += 1
-            step += 1
-            score += reward
-            if step % 10 == 0 or done:
-                print(np.float32(action), np.float32(reward), np.float32(score), end='\r')
-            
-            next_state = np.reshape(next_state, [1, agent.state_size])
-            next_state = list(scaler_s.transform(next_state)[0])
-            next_state = np.reshape(next_state, [1, agent.state_size])
-            # action = scaler_a.transform(np.reshape(action, (-1, 1)))[0]
-
-            state_list.append(state)
-            action_list.append(action)
-            reward_list.append(reward)
-
-            state = next_state
 
 
-            if T >= TMAX or done:
-                T = 0
-                states = state_list + [next_state]
-                states = np.stack(states, axis=1)
-                states = states.reshape(states.shape[1:])
-                actions = agent.target_actor.predict(states)
-                Qs = agent.target_critic.predict([states, actions])
-                discounted = np.zeros_like(reward_list)
-                if done:
-                    G_LAMBD = 0
-                else:
-                    G_LAMBD = Qs[-1]
+    env = gym.make(args.game)
+    # Make RL agent
+    state_size = env.observation_space.shape[0]
+    action_size = env.action_space.shape[0]
+    action_high = env.action_space.high[0]
 
-                for t in reversed(range(len(reward_list))):
-                    # G = reward_list[t] + agent.gamma * G
-                    G_LAMBD = reward_list[t] + ( agent.gamma *
-                                (args.lambd * G_LAMBD + (1 - args.lambd) * Qs[t+1])
-                    )
-                    discounted[t] = G_LAMBD
-                discounted = (discounted) / (np.std(discounted) + 1e-10)
-                agent.append_sample(state_list, action_list, discounted)
-                state_list, action_list, reward_list = [], [], []
+    agent = DDPGAgent(
+        state_size=state_size,
+        action_size=action_size,
+        actor_lr=args.actor_lr,
+        critic_lr=args.critic_lr,
+        tau=args.tau,
+        gamma=args.gamma,
+        lambd=args.lambd,
+        batch_size=args.batch_size,
+        memory_size=args.memory_size,
+        epsilon=args.epsilon,
+        epsilon_end=args.epsilon_end,
+        decay_step=args.decay_step,
+        load_model=args.load_model
+    )
 
+    # # Train
+    episode = 0
+    # highscoreY = 0.
+    # if os.path.exists('save_stat/'+ agent_name + '_stat.csv'):
+    #     with open('save_stat/'+ agent_name + '_stat.csv', 'r') as f:
+    #         read = csv.reader(f)
+    #         episode = int(float(next(reversed(list(read)))[0]))
+    #         print('Last episode:', episode)
+    #         episode += 1
+    # if os.path.exists('save_stat/'+ agent_name + '_highscore.csv'):
+    #     with open('save_stat/'+ agent_name + '_highscore.csv', 'r') as f:
+    #         read = csv.reader(f)
+    #         highscoreY = float(next(reversed(list(read)))[0])
+    #         print('Best Y:', highscoreY)
+    # stats = []
 
-            if done:
-                # log
-                e += 1
-                if TRAIN:
+    if args.play:
+        while True:
+            done = False
+
+            # stats
+            timestep, score, avgAct, avgQ = 0., 0, 0., 0.
+
+            observe = env.reset()
+            state = observe.reshape(1, -1)
+            while not done:
+                if args.render: #and episode % 5 == 0:
+                    env.render()
+                timestep += 1
+                action = agent.actor.predict(state)[0]
+                observe, reward, done, _ = env.step(action * action_high)
+                next_state = observe.reshape(1, -1)
+
+                # stats
+                avgAct += float(action * action_high)
+                avgQ += float(agent.critic.predict([state, action.reshape(1, -1)])[0][0])
+                score += reward
+
+                if timestep % 10 == 0:
+                    print('%s' % (action * action_high), end='\r', flush=True)
+
+                if args.verbose:
+                    print('Step %d Action %s Reward %.2f' % (timestep, action, reward))
+
+                state = next_state
+
+                if agent.epsilon > agent.epsilon_end:
+                    agent.epsilon -= agent.epsilon_decay
+
+            # done
+            avgAct /= timestep
+            avgQ /= timestep
+            print('Ep %d: Step %d Score %.2f AvgQ:%.3f AvgAct:%.3f' % (episode, timestep, score, avgQ, avgAct))
+
+            episode += 1
+    else:        
+        while True:
+            done = False
+
+            # stats
+            timestep, score, avgAct, avgQ = 0., 0, 0., 0.
+            actor_loss, critic_loss = 0., 0.
+
+            observe = env.reset()
+            state = observe.reshape(1, -1)
+            while not done:
+                if args.render: #and episode % 5 == 0:
+                    env.render()
+                if len(agent.memory) >= args.train_start and timestep % args.train_rate == 0:
+                    a_loss, c_loss = agent.train_model()
+                    actor_loss += float(a_loss)
+                    critic_loss += float(c_loss)
                     agent.update_target_model()
-                    print(e, 'episode trained')
+                timestep += 1
+                action, policy = agent.get_action(state)
+                observe, reward, done, _ = env.step(action * action_high)
+                next_state = observe.reshape(1, -1)
 
-                    stat = [e, step, score]
-                    stats.append(stat)
+                agent.append_memory(state, action, reward, next_state, done)
 
-                    with open('ddpg_output.csv', 'a', encoding='utf-8', newline='') as f:
-                        wr = csv.writer(f)
-                        wr.writerow(stat)
-                    if e % 20 == 0:
-                        agent.save_model('ddpg')
-                        stats.clear()
-                else:                    
-                    print('step: %s, \t\t\tscore: %s' % (step, score))
+                # stats
+                avgQ += float(agent.critic.predict([state, action.reshape(1, -1)])[0][0])
+                avgAct += float(action * action_high)
+                score += reward
+
+                if timestep % 10 == 0:
+                    print('%s | %s' % (action * action_high, policy * action_high), end='\r', flush=True)
+
+                if args.verbose:
+                    print('Step %d Action %s Reward %.2f' % (timestep, action, reward))
+
+                state = next_state
+
+                if agent.epsilon > agent.epsilon_end:
+                    agent.epsilon -= agent.epsilon_decay
+
+            # done
+            # if args.verbose or episode % 10 == 0:
+            print('Ep %d: Step %d Score %.2f' % (episode, timestep, score))
+            
+            actor_loss /= timestep
+            critic_loss /= timestep
+            avgQ /= timestep
+            avgAct /= timestep
+            # log stats
+            with open('save_stat/'+ agent_name + '_stat.csv', 'a', encoding='utf-8', newline='') as f:
+                wr = csv.writer(f)
+                wr.writerow(['%.4f' % s if type(s) is float else s for s in [episode, timestep, score, actor_loss, critic_loss, avgQ, avgAct]])
+            agent.save_model('./save_model/'+ agent_name)
+            episode += 1    
