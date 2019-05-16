@@ -1,6 +1,6 @@
 # Snake (Discrete action space) with Keras
 
-![PPO agent after 50000 episodes](https://github.com/sunghoonhong/DeepRL/blob/master/snake_feature/gifs/ppo%20after%2050000%20episode.gif)
+![PPO agent after 50000 episodes](https://github.com/sunghoonhong/DeepRL/blob/master/tensorflow1/snake_feature/gifs/ppo%20after%2050000%20episode.gif)
 
 ## Feature Extraction
 ### State(size = 8)
